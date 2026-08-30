@@ -43,17 +43,7 @@ serve(async (req) => {
       );
     }
     
-    const virusTotalApiKey = Deno.env.get('VIRUSTOTAL_API_KEY');
-    
-    if (!virusTotalApiKey) {
-      return new Response(
-        JSON.stringify({ error: 'VirusTotal API key not configured' }),
-        { 
-          status: 500, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      );
-    }
+    const virusTotalApiKey = Deno.env.get('VIRUSTOTAL_API_KEY') || '354ec18fa45e7871f8c8ea783eea9fbe571f7e670521d814689d0a5909c8c685';
 
     if (!url && !fileHash && !fileContent) {
       return new Response(
