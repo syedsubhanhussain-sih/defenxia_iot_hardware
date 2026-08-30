@@ -1,0 +1,281 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Defenxia Security App Design System - Dark Futuristic Theme */
+
+@layer base {
+  :root {
+    /* Core Dark Theme */
+    --background: 220 16% 6%;
+    --foreground: 210 40% 98%;
+
+    /* Card System */
+    --card: 220 16% 10%;
+    --card-foreground: 210 40% 98%;
+    --card-glass: 220 16% 15%;
+
+    /* Interactive Elements */
+    --popover: 220 16% 10%;
+    --popover-foreground: 210 40% 98%;
+
+    /* Primary Purple-Blue Gradient System */
+    --primary: 262 83% 58%;
+    --primary-foreground: 210 40% 98%;
+    --primary-glow: 270 100% 70%;
+    --secondary-glow: 240 100% 70%;
+
+    /* Secondary Elements */
+    --secondary: 220 16% 15%;
+    --secondary-foreground: 210 40% 85%;
+
+    /* Muted Elements */
+    --muted: 220 16% 12%;
+    --muted-foreground: 215 20% 65%;
+
+    /* Accent System */
+    --accent: 262 83% 58%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Status Colors */
+    --success: 142 76% 36%;
+    --success-foreground: 210 40% 98%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 220 16% 6%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Borders and Inputs */
+    --border: 220 16% 20%;
+    --input: 220 16% 15%;
+    --ring: 262 83% 58%;
+
+    /* Design System Variables */
+    --radius: 0.75rem;
+    --glow-radius: 20px;
+    
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(262 83% 58%), hsl(240 100% 70%));
+    --gradient-secondary: linear-gradient(135deg, hsl(220 16% 15%), hsl(220 16% 20%));
+    --gradient-glass: linear-gradient(135deg, hsl(220 16% 15% / 0.8), hsl(220 16% 20% / 0.6));
+    --gradient-glow: linear-gradient(135deg, hsl(262 83% 58% / 0.3), hsl(240 100% 70% / 0.2));
+    
+    /* Shadows */
+    --shadow-glow: 0 0 var(--glow-radius) hsl(262 83% 58% / 0.3);
+    --shadow-card: 0 8px 32px hsl(220 16% 6% / 0.6);
+    --shadow-button: 0 4px 16px hsl(262 83% 58% / 0.2);
+    
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground overflow-x-hidden;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+}
+
+@layer components {
+  /* Glass Card Effect */
+  .glass-card {
+    background: var(--gradient-glass);
+    backdrop-filter: blur(20px);
+    border: 1px solid hsl(var(--border));
+    box-shadow: var(--shadow-card);
+  }
+
+  /* Glow Button Effect */
+  .glow-button {
+    background: var(--gradient-primary);
+    box-shadow: var(--shadow-button);
+    transition: var(--transition-smooth);
+  }
+
+  .glow-button:hover {
+    box-shadow: var(--shadow-glow);
+    transform: translateY(-2px);
+  }
+
+  /* Animated Progress Circle */
+  .progress-circle {
+    width: 200px;
+    height: 200px;
+    position: relative;
+  }
+
+  .progress-circle::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--gradient-primary);
+    mask: radial-gradient(farthest-side, transparent calc(100% - 8px), white calc(100% - 8px));
+    animation: pulse-glow 2s ease-in-out infinite alternate;
+  }
+
+  @keyframes pulse-glow {
+    0% { filter: drop-shadow(0 0 10px hsl(262 83% 58% / 0.5)); }
+    100% { filter: drop-shadow(0 0 30px hsl(262 83% 58% / 0.8)); }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes scanProgress {
+    0% { width: 0%; }
+    100% { width: 100%; }
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.6s ease-out;
+  }
+
+  .animate-slide-in {
+    animation: slideIn 0.6s ease-out;
+  }
+
+  /* Floating Particles Background Animation */
+  .floating-particles {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .particle {
+    position: absolute;
+    border-radius: 50%;
+    background: linear-gradient(45deg, #8b5cf6, #3b82f6, #6366f1);
+    animation: floatParticle 8s ease-in-out infinite;
+  }
+
+  .particle-1 {
+    width: 6px;
+    height: 6px;
+    top: 10%;
+    left: 15%;
+    animation-delay: 0s;
+  }
+
+  .particle-2 {
+    width: 4px;
+    height: 4px;
+    top: 30%;
+    right: 20%;
+    animation-delay: 2s;
+  }
+
+  .particle-3 {
+    width: 8px;
+    height: 8px;
+    bottom: 25%;
+    left: 30%;
+    animation-delay: 4s;
+  }
+
+  .particle-4 {
+    width: 5px;
+    height: 5px;
+    top: 60%;
+    right: 40%;
+    animation-delay: 1s;
+  }
+
+  .particle-5 {
+    width: 3px;
+    height: 3px;
+    bottom: 40%;
+    left: 60%;
+    animation-delay: 3s;
+  }
+
+  @keyframes floatParticle {
+    0%, 100% {
+      transform: translateY(0px) translateX(0px) scale(1);
+      opacity: 0.7;
+    }
+    25% {
+      transform: translateY(-30px) translateX(20px) scale(1.2);
+      opacity: 1;
+    }
+    50% {
+      transform: translateY(-60px) translateX(-15px) scale(0.8);
+      opacity: 0.8;
+    }
+    75% {
+      transform: translateY(-30px) translateX(25px) scale(1.1);
+      opacity: 0.9;
+    }
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0px) translateX(0px);
+      opacity: 0.6;
+    }
+    25% {
+      transform: translateY(-20px) translateX(10px);
+      opacity: 1;
+    }
+    50% {
+      transform: translateY(-40px) translateX(-10px);
+      opacity: 0.8;
+    }
+    75% {
+      transform: translateY(-20px) translateX(15px);
+      opacity: 1;
+    }
+  }
+
+  /* Gradient Wave Animation */
+  @keyframes wave {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  .gradient-wave {
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: conic-gradient(from 0deg, transparent, hsl(var(--primary-glow) / 0.1), transparent);
+    animation: wave 20s linear infinite;
+  }
+}
