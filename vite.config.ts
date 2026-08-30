@@ -8,6 +8,14 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    proxy: {
+      '/api/leakcheck': {
+        target: 'https://leakcheck.io/api',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/api\/leakcheck/, '')
+      }
+    }
   },
   plugins: [
     react(),

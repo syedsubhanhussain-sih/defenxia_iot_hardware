@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.create-secure-session]
 verify_jwt = false
+
+[functions.check-data-breach]
+verify_jwt = false
