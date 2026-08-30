@@ -6,6 +6,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Header } from "./components/layout/header";
 import { Footer } from "./components/layout/footer";
 import { SimulationProvider, useSimulation } from "./contexts/SimulationContext";
+import { AuthProvider } from "./contexts/AuthContext";
+import { AuthModal } from "./components/AuthModal";
 import Homepage from "./pages/Homepage";
 import Scanning from "./pages/Scanning";
 import QRScanner from "./pages/QRScanner";
@@ -34,6 +36,7 @@ const AppContent = () => {
 
   return (
     <div className="min-h-screen bg-background pb-16">
+      <AuthModal />
       {isSimulating && <SimulateAttackPanel />}
       <Routes>
         <Route path="/" element={<><Header /><Homepage /><Footer /></>} />
@@ -68,9 +71,11 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <SimulationProvider>
-          <AppContent />
-        </SimulationProvider>
+        <AuthProvider>
+          <SimulationProvider>
+            <AppContent />
+          </SimulationProvider>
+        </AuthProvider>
       </TooltipProvider>
     </BrowserRouter>
   </QueryClientProvider>
