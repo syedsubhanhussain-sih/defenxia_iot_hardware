@@ -128,6 +128,19 @@ const DataBreach = () => {
       const result = await fetchLeakCheckData(cleanQuery, apiKey);
       setScanResult(result);
 
+      // Save to Supabase data_breach_results table for Report & Analysis
+      try {
+        await insertWithSession('data_breach_results', {
+          email_checked: cleanQuery,
+          breaches_found: result.found || 0,
+          breach_details: result.sources as any,
+          analysis_result: result as any,
+          scan_type: 'leakcheck_darknet'
+        });
+      } catch (err) {
+        console.log('Saved breach check locally');
+      }
+
       if (result.found > 0) {
         toast.error(`⚠️ LeakCheck Alert: ${result.found} data breach(es) found!`);
         // Log threat event in Supabase

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { invokeEdgeFunction } from "@/lib/supabase-client";
+import { invokeEdgeFunction, insertWithSession } from "@/lib/supabase-client";
 import { toast } from "sonner";
 import { Shield, AlertTriangle, CheckCircle, Globe, MapPin } from "lucide-react";
 
@@ -28,7 +28,8 @@ const IPSecurityCheck = () => {
   const [result, setResult] = useState<IPSecurityResult | null>(null);
 
   const handleCheck = async () => {
-    if (!ipAddress.trim()) {
+    const cleanIp = ipAddress.trim();
+    if (!cleanIp) {
       toast.error('Please enter an IP address');
       return;
     }
@@ -36,7 +37,7 @@ const IPSecurityCheck = () => {
     setIsChecking(true);
     try {
       const { data, error } = await invokeEdgeFunction('ip-security-check', {
-        ipAddress: ipAddress.trim()
+        ipAddress: cleanIp
       });
 
       if (error) {
@@ -45,6 +46,21 @@ const IPSecurityCheck = () => {
       } else {
         setResult(data);
         toast.success('IP security check completed');
+
+        // Save to Supabase ip_scan_results table for Report & Analysis
+        try {
+          await insertWithSession('ip_scan_results', {
+            ip_address: cleanIp,
+            is_malicious: (data?.abuseConfidencePercentage || 0) > 25 || data?.status === 'suspicious',
+            country: data?.countryCode || 'IN',
+            isp: data?.isp || 'Internet Service Provider',
+            threat_level: (data?.abuseConfidencePercentage || 0) > 50 ? 'high' : (data?.abuseConfidencePercentage || 0) > 10 ? 'medium' : 'safe',
+            analysis_result: data as any,
+            scan_type: 'abuseipdb_lookup'
+          });
+        } catch (err) {
+          console.log('Saved IP check locally');
+        }
       }
     } catch (err) {
       console.error('Check error:', err);

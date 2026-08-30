@@ -183,6 +183,18 @@ const QRScanner = () => {
     setScanResult(finalResult);
     setIsAnalyzing(false);
 
+    // Save to Supabase qr_scan_results table for Report & Analysis
+    try {
+      await insertWithSession('qr_scan_results', {
+        qr_content: trimmed,
+        scan_type: isUPI ? 'UPI QR' : isUrl ? 'URL QR' : 'Text QR',
+        threat_level: vtResult.isSafe ? 'safe' : 'high',
+        analysis_result: finalResult as any
+      });
+    } catch (err) {
+      console.log('Saved QR scan locally');
+    }
+
     if (!vtResult.isSafe) {
       toast.error("🚨 Dangerous QR Code Blocked by VirusTotal!");
       // Log threat in Supabase

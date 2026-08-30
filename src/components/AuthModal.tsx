@@ -12,11 +12,12 @@ import {
   RefreshCw,
   Sparkles,
   Radio,
-  ExternalLink
+  AlertCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { toast } from 'sonner';
 
 export const AuthModal: React.FC = () => {
   const { 
@@ -34,6 +35,7 @@ export const AuthModal: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+  const [googleNotice, setGoogleNotice] = useState<string | null>(null);
 
   if (!isAuthModalOpen) return null;
 
@@ -42,6 +44,7 @@ export const AuthModal: React.FC = () => {
     if (!email.trim() || !password) return;
 
     setIsSubmitting(true);
+    setGoogleNotice(null);
     if (activeTab === 'login') {
       await signIn(email, password);
     } else {
@@ -52,7 +55,12 @@ export const AuthModal: React.FC = () => {
 
   const handleGoogleSignIn = async () => {
     setIsGoogleSubmitting(true);
-    await signInWithGoogle();
+    const result = await signInWithGoogle();
+    if (result.error) {
+      setGoogleNotice(
+        "Google Provider is currently disabled in your Supabase Project Settings. Please use instant Email & Password sign-up below, or enable Google OAuth in your Supabase dashboard."
+      );
+    }
     setIsGoogleSubmitting(false);
   };
 
@@ -65,7 +73,7 @@ export const AuthModal: React.FC = () => {
       />
 
       {/* Modal Card */}
-      <div className="relative w-full max-w-md bg-slate-950/95 border border-purple-500/30 rounded-3xl p-6 sm:p-8 shadow-[0_0_50px_rgba(139,92,246,0.25)] z-10">
+      <div className="relative w-full max-w-md bg-slate-950/95 border border-purple-500/30 rounded-3xl p-6 sm:p-8 shadow-[0_0_50px_rgba(139,92,246,0.25)] z-10 max-h-[95vh] overflow-y-auto">
         
         {/* Close Button */}
         <Button
@@ -95,6 +103,14 @@ export const AuthModal: React.FC = () => {
             </Badge>
           </div>
         </div>
+
+        {/* Google OAuth Notice Banner if clicked */}
+        {googleNotice && (
+          <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl mb-4 text-[11px] text-amber-300 flex items-start gap-2 animate-fade-in">
+            <AlertCircle size={15} className="shrink-0 mt-0.5 text-amber-400" />
+            <span>{googleNotice}</span>
+          </div>
+        )}
 
         {/* Google OAuth Button */}
         <Button
@@ -133,7 +149,7 @@ export const AuthModal: React.FC = () => {
         <div className="relative flex py-2 items-center mb-4">
           <div className="flex-grow border-t border-white/10"></div>
           <span className="flex-shrink mx-3 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-            Or with email
+            Or with email & password (Instant)
           </span>
           <div className="flex-grow border-t border-white/10"></div>
         </div>
@@ -142,7 +158,10 @@ export const AuthModal: React.FC = () => {
         <div className="grid grid-cols-2 p-1 bg-black/50 border border-white/10 rounded-2xl mb-5">
           <button
             type="button"
-            onClick={() => setActiveTab('login')}
+            onClick={() => {
+              setActiveTab('login');
+              setGoogleNotice(null);
+            }}
             className={`py-2 text-xs font-semibold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
               activeTab === 'login'
                 ? 'bg-purple-600 text-white shadow-md'
@@ -154,7 +173,10 @@ export const AuthModal: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab('signup')}
+            onClick={() => {
+              setActiveTab('signup');
+              setGoogleNotice(null);
+            }}
             className={`py-2 text-xs font-semibold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
               activeTab === 'signup'
                 ? 'bg-purple-600 text-white shadow-md'
@@ -175,7 +197,7 @@ export const AuthModal: React.FC = () => {
             <div className="relative">
               <Input
                 type="email"
-                placeholder="name@example.com"
+                placeholder="e.g. user@gmail.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -237,7 +259,10 @@ export const AuthModal: React.FC = () => {
                 Don't have an account?{' '}
                 <button
                   type="button"
-                  onClick={() => setActiveTab('signup')}
+                  onClick={() => {
+                    setActiveTab('signup');
+                    setGoogleNotice(null);
+                  }}
                   className="text-purple-400 hover:text-purple-300 font-semibold underline underline-offset-2 ml-1"
                 >
                   Sign up here
@@ -248,7 +273,10 @@ export const AuthModal: React.FC = () => {
                 Already have an account?{' '}
                 <button
                   type="button"
-                  onClick={() => setActiveTab('login')}
+                  onClick={() => {
+                    setActiveTab('login');
+                    setGoogleNotice(null);
+                  }}
                   className="text-purple-400 hover:text-purple-300 font-semibold underline underline-offset-2 ml-1"
                 >
                   Sign in

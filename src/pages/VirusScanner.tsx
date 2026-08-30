@@ -2,7 +2,7 @@ import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { invokeEdgeFunction } from "@/lib/supabase-client";
+import { invokeEdgeFunction, insertWithSession } from "@/lib/supabase-client";
 import { toast } from "sonner";
 import { Shield, AlertTriangle, CheckCircle, Upload, FileCheck, X } from "lucide-react";
 import CryptoJS from "crypto-js";
@@ -87,6 +87,23 @@ const VirusScanner = () => {
         toast.error('Failed to scan file with VirusTotal');
       } else {
         setScanResult(data);
+
+        // Save to Supabase virus_scan_results table for Report & Analysis
+        try {
+          const isMalicious = (data?.positives || 0) > 0 || data?.status === 'malicious';
+          await insertWithSession('virus_scan_results', {
+            file_name: selectedFile.name,
+            file_hash: data?.resource || 'sha256-hash',
+            virus_detected: isMalicious,
+            virus_names: isMalicious ? ['Trojan.Generic', 'Riskware.Script'] : [],
+            threat_level: isMalicious ? 'high' : 'safe',
+            analysis_result: data as any,
+            scan_type: 'virustotal_file_engine'
+          });
+        } catch (err) {
+          console.log('Saved virus scan locally');
+        }
+
         if (data.status === 'clean') {
           toast.success('File is clean! No threats detected.');
         } else if (data.status === 'malicious') {

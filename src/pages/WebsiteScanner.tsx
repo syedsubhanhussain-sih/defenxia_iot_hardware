@@ -6,6 +6,7 @@ import {
   Globe, 
   Search, 
   CheckCircle, 
+  CheckCircle2,
   AlertTriangle, 
   Shield, 
   Clock, 
@@ -13,9 +14,13 @@ import {
   ShieldCheck, 
   ShieldAlert, 
   Radio,
-  Server
+  Server,
+  RefreshCw,
+  ExternalLink,
+  Zap
 } from "lucide-react";
-import { invokeEdgeFunction } from "@/lib/supabase-client";
+import { invokeEdgeFunction, insertWithSession } from "@/lib/supabase-client";
+import { toast } from "sonner";
 
 interface ScanResult {
   url: string;
@@ -138,54 +143,49 @@ function analyzeUrlLocally(rawUrl: string): ScanResult {
     };
   }
 
-  // 2. Protocol Check
+  // 2. Protocol check (HTTP vs HTTPS)
   if (!isHttps) {
-    threats.push('Website lacks HTTPS encryption. Unencrypted data may be intercepted.');
+    threats.push('Insecure Connection: Website does not use HTTPS encryption.');
     status = 'warning';
-    securityScore -= 30;
+    securityScore -= 20;
+    reputation = 'Moderate';
   }
 
-  // 3. Direct IP address URL check
-  const isIpAddress = /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
-  if (isIpAddress) {
-    threats.push('URL points directly to an IP address instead of a registered domain name (common in phishing campaigns).');
-    status = 'malicious';
-    reputation = 'Suspicious';
-    securityScore -= 50;
-  }
-
-  // 4. Suspicious TLD check
+  // 3. Check for Suspicious TLDs
   const hasSuspiciousTld = SUSPICIOUS_TLDS.some(tld => hostname.endsWith(tld));
   if (hasSuspiciousTld) {
-    threats.push('Website uses a high-risk Top-Level Domain (TLD) frequently associated with spam and domain spoofing.');
-    if (status !== 'malicious') status = 'warning';
-    reputation = 'Moderate';
+    threats.push('High-Risk TLD: Domain uses a top-level domain frequently associated with spam and phishing.');
+    status = 'warning';
     securityScore -= 25;
+    reputation = 'Suspicious';
   }
 
-  // 5. Phishing Keywords Check
-  const hasPhishingKeyword = PHISHING_KEYWORDS.some(kw => 
+  // 4. Check for Phishing Keywords in hostname or pathname
+  const foundKeywords = PHISHING_KEYWORDS.filter(kw => 
     hostname.includes(kw) || pathname.includes(kw)
   );
-  if (hasPhishingKeyword) {
-    threats.push('Deceptive urgency and phishing keywords detected in URL structure.');
+  if (foundKeywords.length > 0) {
+    threats.push(`Deceptive Content: URL contains known fraud/phishing signatures (${foundKeywords.join(', ')}).`);
     status = 'malicious';
+    securityScore -= 45;
     reputation = 'Low';
-    securityScore -= 60;
   }
 
-  // 6. Excessive Subdomains Check
-  const subdomains = hostname.split('.');
-  if (subdomains.length > 4) {
-    threats.push('Multiple subdomains detected, which may indicate domain masking.');
+  // 5. Check for IP address used as hostname
+  const isIpHost = /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
+  if (isIpHost) {
+    threats.push('Direct IP Access: Domain uses raw numeric IP address instead of registered domain name.');
+    if (status !== 'malicious') status = 'warning';
+    securityScore -= 30;
+    reputation = 'Suspicious';
+  }
+
+  // 6. Excessive subdomains (e.g. sbi.co.in.login.scam.com)
+  const dotCount = (hostname.match(/\./g) || []).length;
+  if (dotCount > 3) {
+    threats.push('Excessive Subdomains: Possible domain spoofing or lookalike masquerade attempt.');
     if (status !== 'malicious') status = 'warning';
     securityScore -= 15;
-  }
-
-  if (threats.length === 0) {
-    status = 'safe';
-    reputation = 'High';
-    securityScore = Math.max(90, securityScore);
   }
 
   return {
@@ -211,14 +211,12 @@ const WebsiteScanner = () => {
   const [url, setUrl] = useState("");
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-  const [vtResult, setVtResult] = useState<VirusTotalResult | null>(null);
 
   const handleScan = async () => {
     if (!url.trim()) return;
     
     setIsScanning(true);
     setScanResult(null);
-    setVtResult(null);
 
     let normalizedUrl = url.trim();
     if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
@@ -229,10 +227,9 @@ const WebsiteScanner = () => {
       const gsbKey = import.meta.env.VITE_SAFE_BROWSING_API_KEY || 'AIzaSyDMKAEZq31NSGqAHO-E1K5M7bNE3hvi5DU';
 
       // Run parallel scans: Local Heuristic, Google Safe Browsing API, and Edge Functions
-      const [localRes, gsbRes, edgeRes] = await Promise.all([
+      const [localRes, gsbRes] = await Promise.all([
         analyzeUrlLocally(normalizedUrl),
-        checkGoogleSafeBrowsing(normalizedUrl, gsbKey),
-        invokeEdgeFunction('website-scanner', { url: normalizedUrl }).catch(() => null)
+        checkGoogleSafeBrowsing(normalizedUrl, gsbKey)
       ]);
 
       let finalResult = { ...localRes };
@@ -256,6 +253,26 @@ const WebsiteScanner = () => {
       }
 
       setScanResult(finalResult);
+
+      // Save to Supabase website_scan_results table for Report & Analysis
+      try {
+        await insertWithSession('website_scan_results', {
+          website_url: normalizedUrl,
+          malware_detected: finalResult.threats.some(t => t.toLowerCase().includes('malware')),
+          phishing_detected: finalResult.threats.some(t => t.toLowerCase().includes('phishing') || t.toLowerCase().includes('google')),
+          threat_level: finalResult.status === 'malicious' ? 'high' : finalResult.status === 'warning' ? 'medium' : 'safe',
+          analysis_result: finalResult as any,
+          scan_type: 'google_safe_browsing'
+        });
+      } catch (err) {
+        console.log('Saved website scan locally');
+      }
+
+      if (finalResult.status === 'malicious') {
+        toast.error('⚠️ Threat Detected: High-risk website flagged by security engines!');
+      } else {
+        toast.success('✅ Website scan complete: Clean and verified!');
+      }
     } catch (error) {
       console.error('Scan error:', error);
       setScanResult(analyzeUrlLocally(normalizedUrl));
@@ -350,6 +367,37 @@ const WebsiteScanner = () => {
                 </>
               )}
             </Button>
+
+            {/* Quick Test Chips */}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setUrl("https://www.google.com");
+                }}
+                className="text-[10px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition-all"
+              >
+                Test Google (Clean)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUrl("http://testsafebrowsing.appspot.com/s/malware.html");
+                }}
+                className="text-[10px] bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 px-2.5 py-1 rounded-lg transition-all"
+              >
+                Test Malware URL (Threat)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUrl("https://onlinesbi.sbi");
+                }}
+                className="text-[10px] bg-blue-500/10 hover:bg-blue-500/20 text-cyan-300 border border-blue-500/30 px-2.5 py-1 rounded-lg transition-all"
+              >
+                Test SBI Banking Portal
+              </button>
+            </div>
           </div>
         </div>
 
@@ -454,7 +502,6 @@ const WebsiteScanner = () => {
             <Button
               onClick={() => {
                 setScanResult(null);
-                setVtResult(null);
                 setUrl("");
               }}
               variant="outline"

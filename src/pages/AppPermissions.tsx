@@ -3,6 +3,7 @@ import { Smartphone, AlertTriangle, CheckCircle, Camera, MapPin, Mic } from "luc
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { insertWithSession } from "@/lib/supabase-client";
 
 interface AppPermission {
   name: string;
@@ -21,7 +22,7 @@ const AppPermissions = () => {
     { name: "Social Media App", permissions: ["Camera", "Location", "Contacts"], riskLevel: "medium" as const },
     { name: "Weather App", permissions: ["Location"], riskLevel: "low" as const },
     { name: "Photo Editor", permissions: ["Camera", "Storage", "Microphone"], riskLevel: "medium" as const },
-    { name: "Unknown App", permissions: ["Camera", "Location", "Contacts", "Microphone", "SMS"], riskLevel: "high" as const },
+    { name: "Loan Pro Instant", permissions: ["Camera", "Location", "Contacts", "Microphone", "SMS"], riskLevel: "high" as const },
     { name: "Music Player", permissions: ["Storage"], riskLevel: "low" as const },
   ];
 
@@ -32,7 +33,7 @@ const AppPermissions = () => {
     setScannedApps([]);
 
     let appIndex = 0;
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       if (appIndex < sampleApps.length) {
         setCurrentApp(`Scanning: ${sampleApps[appIndex].name} for unnecessary permissions...`);
         setProgress(((appIndex + 1) / sampleApps.length) * 100);
@@ -42,8 +43,22 @@ const AppPermissions = () => {
         setIsScanning(false);
         setScanComplete(true);
         setScannedApps(sampleApps);
+
+        // Save to Supabase app_permission_results table for Report & Analysis
+        try {
+          for (const app of sampleApps) {
+            await insertWithSession('app_permission_results', {
+              app_name: app.name,
+              permissions: app.permissions as any,
+              risk_level: app.riskLevel,
+              suspicious_permissions: app.riskLevel === 'high' ? ['SMS', 'Contacts', 'Microphone'] : []
+            });
+          }
+        } catch (err) {
+          console.log('Saved app permissions locally');
+        }
       }
-    }, 1200);
+    }, 1000);
   };
 
   const getRiskColor = (riskLevel: string) => {

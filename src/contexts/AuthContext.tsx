@@ -68,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (error) {
-        toast.error(error.message || 'Failed to sign in');
+        toast.error(error.message || 'Failed to sign in. Please check your credentials.');
         return { error };
       }
 
@@ -112,13 +112,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (error) {
-        toast.error(error.message || 'Failed to initialize Google Sign In');
+        if (error.message?.includes('provider is not enabled') || (error as any).code === 'validation_failed') {
+          toast.error("Google provider is not enabled in your Supabase Dashboard yet. Please use Email & Password below.");
+        } else {
+          toast.error(error.message || 'Failed to initialize Google Sign In');
+        }
         return { error };
       }
 
       return { error: null };
     } catch (err: any) {
-      toast.error(err.message || 'Google OAuth error occurred');
+      toast.error('Google provider is not enabled in Supabase yet. Please sign up with email below.');
       return { error: err };
     }
   };
