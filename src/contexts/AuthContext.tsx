@@ -14,6 +14,7 @@ interface AuthContextType {
   setActiveTab: (tab: 'login' | 'signup') => void;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signInWithGoogle: () => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -35,10 +36,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 2. Listen to real-time auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       setIsLoading(false);
+
+      if (event === 'SIGNED_IN' && session?.user) {
+        toast.success(`Welcome, ${session.user.email || 'User'}!`);
+      }
     });
 
     return () => {
@@ -97,6 +102,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const signInWithGoogle = async () => {
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin
+        }
+      });
+
+      if (error) {
+        toast.error(error.message || 'Failed to initialize Google Sign In');
+        return { error };
+      }
+
+      return { error: null };
+    } catch (err: any) {
+      toast.error(err.message || 'Google OAuth error occurred');
+      return { error: err };
+    }
+  };
+
   const signOut = async () => {
     try {
       await supabase.auth.signOut();
@@ -119,6 +145,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setActiveTab,
         signIn,
         signUp,
+        signInWithGoogle,
         signOut
       }}
     >
