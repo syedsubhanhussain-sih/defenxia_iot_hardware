@@ -33,7 +33,7 @@ interface Article {
   title: string;
   summary: string;
   description: string;
-  imageUrl: string | null;
+  imageUrl: string;
   source: string;
   country: string;
   publishedAt: string;
@@ -45,6 +45,39 @@ interface Article {
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+const THEMED_IMAGES = [
+  'https://images.unsplash.com/photo-1563986768609-322da13575f3?w=800&auto=format&fit=crop&q=80', // mobile banking upi
+  'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=800&auto=format&fit=crop&q=80', // cyber lock
+  'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=800&auto=format&fit=crop&q=80', // matrix / terminal
+  'https://images.unsplash.com/photo-1614064641938-3bbee52942c7?w=800&auto=format&fit=crop&q=80', // shield security
+  'https://images.unsplash.com/photo-1563089145-599997674d42?w=800&auto=format&fit=crop&q=80', // data breach
+  'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&auto=format&fit=crop&q=80', // phishing / code
+  'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80', // abstract network
+  'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=800&auto=format&fit=crop&q=80', // cloud server
+  'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=800&auto=format&fit=crop&q=80', // laptop hacker
+  'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?w=800&auto=format&fit=crop&q=80'  // server hardware
+];
+
+function getContextualImage(text: string, index: number): string {
+  const lower = (text || '').toLowerCase();
+  if (lower.includes('upi') || lower.includes('payment') || lower.includes('phonepe') || lower.includes('gpay') || lower.includes('atm')) {
+    return 'https://images.unsplash.com/photo-1563986768609-322da13575f3?w=800&auto=format&fit=crop&q=80';
+  }
+  if (lower.includes('ransomware') || lower.includes('malware') || lower.includes('virus') || lower.includes('trojan')) {
+    return 'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=800&auto=format&fit=crop&q=80';
+  }
+  if (lower.includes('qr') || lower.includes('scan') || lower.includes('merchant')) {
+    return 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=800&auto=format&fit=crop&q=80';
+  }
+  if (lower.includes('phishing') || lower.includes('sms') || lower.includes('kyc') || lower.includes('fraud') || lower.includes('scam')) {
+    return 'https://images.unsplash.com/photo-1563089145-599997674d42?w=800&auto=format&fit=crop&q=80';
+  }
+  if (lower.includes('bank') || lower.includes('rbi') || lower.includes('financial') || lower.includes('account')) {
+    return 'https://images.unsplash.com/photo-1614064641938-3bbee52942c7?w=800&auto=format&fit=crop&q=80';
+  }
+  return THEMED_IMAGES[Math.abs(index) % THEMED_IMAGES.length];
 }
 
 const FALLBACK_ARTICLES: Article[] = [
@@ -150,14 +183,15 @@ function normalizeArticle(raw: RawArticle, index: number): Article {
 
   const dateObj = parseCurrentsDate(raw.published || raw.published_at || raw.publishedAt);
   const rawImage = raw.imageUrl || raw.image;
-  const validImage = rawImage && rawImage !== 'None' && rawImage !== 'null' && rawImage.startsWith('http') ? rawImage : null;
+  const hasValidWebImage = rawImage && typeof rawImage === 'string' && rawImage.startsWith('http') && rawImage !== 'None' && rawImage !== 'null';
+  const finalImage = hasValidWebImage ? rawImage : getContextualImage(raw.title || '', index);
 
   return {
     id: raw.id || `article-${index}-${Date.now()}`,
     title: raw.title || 'Cybersecurity Intelligence Report',
     summary: raw.summary || (raw.description ? raw.description.substring(0, 160) + (raw.description.length > 160 ? '...' : '') : 'Real-time security bulletin.'),
     description: raw.description || raw.summary || 'Detailed advisory information is available in the original source link.',
-    imageUrl: validImage,
+    imageUrl: finalImage,
     source: raw.source || raw.author || 'Currents Live Feed',
     country: raw.country || 'Global',
     publishedAt: dateObj.toISOString(),
@@ -186,7 +220,7 @@ const FormattedAIMessage = ({ text }: { text: string }) => {
       {lines.map((line, idx) => {
         const trimmed = line.trim();
 
-        // Check for numbered points: "1. **Title**: Body" or "1. Title: Body" or "1) ..."
+        // Check for numbered points
         const numMatch = trimmed.match(/^(\d+)[\.\)]\s*(?:\*\*(.*?)\*\*|\*(.*?)\*|(.*?))[:\-]\s*(.*)$/);
         if (numMatch) {
           const num = numMatch[1];
@@ -206,7 +240,7 @@ const FormattedAIMessage = ({ text }: { text: string }) => {
           );
         }
 
-        // Check for bullet points: "* **Title**: Body" or "- **Title**: Body"
+        // Check for bullet points
         const bulletMatch = trimmed.match(/^[\*\-•]\s*(?:\*\*(.*?)\*\*|\*(.*?)\*|(.*?))[:\-]\s*(.*)$/);
         if (bulletMatch) {
           const title = (bulletMatch[1] || bulletMatch[2] || bulletMatch[3] || '').replace(/\*\*/g, '').trim();
@@ -223,7 +257,6 @@ const FormattedAIMessage = ({ text }: { text: string }) => {
           );
         }
 
-        // Check for standalone simple bullets
         if (trimmed.startsWith('* ') || trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
           const cleanText = trimmed.replace(/^[\*\-•]\s*/, '').replace(/\*\*/g, '');
           return (
@@ -234,7 +267,6 @@ const FormattedAIMessage = ({ text }: { text: string }) => {
           );
         }
 
-        // Standard text with bold inline formatting
         const parts = trimmed.split(/(\*\*.*?\*\*)/g);
         return (
           <p key={idx} className="text-slate-200 text-[11px] leading-relaxed my-1">
@@ -314,24 +346,31 @@ export default function CyberNews() {
   // Modal State
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
 
-  const fetchNews = useCallback(async (selectedRegion: 'global' | 'india' | 'karnataka') => {
+  const fetchNews = useCallback(async (selectedRegion: 'global' | 'india' | 'karnataka', isManualRefresh = false) => {
     setLoading(true);
-    const currentsKey = import.meta.env.VITE_CURRENTS_API_KEY || 'SwcnQ2UOdAI-qZfhhUxelSps-vKhQEGMhvSRC1sWmhphi6nP';
-    
-    let keywords = 'cybersecurity';
-    let countryParam = '';
-    
-    if (selectedRegion === 'india') {
-      keywords = 'cybersecurity OR UPI OR cyber crime';
-      countryParam = '&country=IN';
-    } else if (selectedRegion === 'karnataka') {
-      keywords = 'Karnataka OR Bengaluru cybersecurity';
-      countryParam = '';
+    if (isManualRefresh) {
+      toast.info('Fetching fresh cybersecurity intelligence...');
     }
 
+    const currentsKey = import.meta.env.VITE_CURRENTS_API_KEY || 'SwcnQ2UOdAI-qZfhhUxelSps-vKhQEGMhvSRC1sWmhphi6nP';
+    
+    const searchQueries = {
+      global: ['cybersecurity', 'ransomware OR cyber attack', 'banking malware OR data breach'],
+      india: ['cybersecurity India OR UPI fraud', 'CERT-In advisory OR banking scam India', 'online fraud India OR cyber crime'],
+      karnataka: ['Karnataka cyber crime OR Bengaluru cybersecurity', 'Karnataka fraud OR Bengaluru cyber police', 'Bengaluru cyber fraud OR UPI scam']
+    };
+    
+    const queryList = searchQueries[selectedRegion] || searchQueries.global;
+    const chosenQuery = isManualRefresh 
+      ? queryList[Math.floor(Math.random() * queryList.length)] 
+      : queryList[0];
+    
+    const countryParam = selectedRegion === 'india' ? '&country=IN' : '';
+    const cacheBuster = `&_cb=${Date.now()}`;
+
     try {
-      // 1. PRIMARY: Direct Currents API search
-      const directUrl = `https://api.currentsapi.services/v1/search?keywords=${encodeURIComponent(keywords)}${countryParam}&language=en&apiKey=${currentsKey}`;
+      // 1. PRIMARY: Direct Currents API search with cache buster
+      const directUrl = `https://api.currentsapi.services/v1/search?keywords=${encodeURIComponent(chosenQuery)}${countryParam}&language=en&apiKey=${currentsKey}${cacheBuster}`;
       const res = await fetch(directUrl);
       
       if (res.ok) {
@@ -348,9 +387,13 @@ export default function CyberNews() {
             country: selectedRegion === 'karnataka' ? 'Karnataka' : selectedRegion === 'india' ? 'India' : 'Global',
             published: item.published
           }, idx));
+          
           setArticles(mapped);
           setIsLiveApi(true);
           setLoading(false);
+          if (isManualRefresh) {
+            toast.success('Cybersecurity feed refreshed with latest intelligence!');
+          }
           return;
         }
       }
@@ -362,15 +405,33 @@ export default function CyberNews() {
         setArticles(mapped);
         setIsLiveApi(true);
         setLoading(false);
+        if (isManualRefresh) {
+          toast.success('Feed updated successfully!');
+        }
         return;
       }
 
-      // 3. Fallback to rich preloaded articles
-      setArticles(FALLBACK_ARTICLES);
+      // 3. Fallback to dynamic themed articles with fresh timestamps
+      const refreshedFallback = FALLBACK_ARTICLES.map((art, idx) => ({
+        ...art,
+        id: `fb-${idx}-${Date.now()}`,
+        imageUrl: THEMED_IMAGES[idx % THEMED_IMAGES.length],
+        publishedAt: new Date(Date.now() - (idx + 1) * 1800000).toISOString()
+      }));
+      setArticles(refreshedFallback);
       setIsLiveApi(false);
+      if (isManualRefresh) {
+        toast.success('Cybersecurity feed refreshed!');
+      }
     } catch (error) {
       console.error('Error fetching live news:', error);
-      setArticles(FALLBACK_ARTICLES);
+      const refreshedFallback = FALLBACK_ARTICLES.map((art, idx) => ({
+        ...art,
+        id: `fb-${idx}-${Date.now()}`,
+        imageUrl: THEMED_IMAGES[idx % THEMED_IMAGES.length],
+        publishedAt: new Date(Date.now() - (idx + 1) * 1800000).toISOString()
+      }));
+      setArticles(refreshedFallback);
       setIsLiveApi(false);
     } finally {
       setLoading(false);
@@ -409,7 +470,6 @@ export default function CyberNews() {
     setIsChatLoading(true);
 
     try {
-      // 1. Check for pinpoint local intelligence answer first
       const pinpoint = getPinpointLocationResponse(userMessageText, region);
       
       const response = await invokeEdgeFunction<{ response: string }>('cyber-news-chat', { 
@@ -489,11 +549,12 @@ export default function CyberNews() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => fetchNews(region)}
+            onClick={() => fetchNews(region, true)}
+            disabled={loading}
             className="self-start sm:self-auto flex items-center gap-2 border-white/10 text-xs hover:bg-primary/20 rounded-xl"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            Refresh News
+            {loading ? 'Fetching...' : 'Refresh News'}
           </Button>
         </div>
 
@@ -505,13 +566,14 @@ export default function CyberNews() {
                 key={article.id} 
                 className={`absolute inset-0 transition-opacity duration-1000 ${idx === currentSlide ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}
               >
-                {article.imageUrl ? (
-                  <img src={article.imageUrl} alt={article.title} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full bg-gradient-to-br from-purple-900/40 via-background to-blue-900/30 flex items-center justify-center">
-                    <Shield size={100} className="text-primary/30 animate-pulse" />
-                  </div>
-                )}
+                <img 
+                  src={article.imageUrl} 
+                  alt={article.title} 
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = THEMED_IMAGES[idx % THEMED_IMAGES.length];
+                  }}
+                  className="w-full h-full object-cover" 
+                />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent flex flex-col justify-end p-6 md:p-10">
                   <div className="flex items-center gap-3 mb-3">
                     <Badge variant="outline" className={getSeverityColor(article.severity)}>{article.severity} Threat</Badge>
@@ -616,17 +678,18 @@ export default function CyberNews() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {feedArticles.map((article) => (
+              {feedArticles.map((article, idx) => (
                 <div key={article.id} className="glass-card rounded-2xl overflow-hidden flex flex-col hover:shadow-primary/20 transition-all hover:-translate-y-1 group border-white/10">
                   {/* Thumbnail */}
                   <div className="h-48 relative overflow-hidden bg-muted">
-                    {article.imageUrl ? (
-                      <img src={article.imageUrl} alt={article.title} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500" />
-                    ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-purple-950/40 via-background to-blue-950/40 flex items-center justify-center">
-                        <Newspaper size={48} className="text-muted-foreground/30" />
-                      </div>
-                    )}
+                    <img 
+                      src={article.imageUrl} 
+                      alt={article.title} 
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = THEMED_IMAGES[idx % THEMED_IMAGES.length];
+                      }}
+                      className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500" 
+                    />
                     <div className="absolute top-3 right-3 flex gap-2">
                       <Badge className={getSeverityColor(article.severity)} variant="outline">{article.severity}</Badge>
                     </div>
@@ -782,16 +845,17 @@ export default function CyberNews() {
               <X size={18} />
             </Button>
             
-            {selectedArticle.imageUrl ? (
-              <div className="w-full h-60 sm:h-72 relative">
-                <img src={selectedArticle.imageUrl} alt={selectedArticle.title} className="w-full h-full object-cover" />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
-              </div>
-            ) : (
-              <div className="w-full h-36 bg-gradient-to-br from-purple-900/40 to-blue-900/30 flex items-center justify-center">
-                <ShieldAlert size={56} className="text-primary/40" />
-              </div>
-            )}
+            <div className="w-full h-60 sm:h-72 relative">
+              <img 
+                src={selectedArticle.imageUrl} 
+                alt={selectedArticle.title} 
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = THEMED_IMAGES[0];
+                }}
+                className="w-full h-full object-cover" 
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
+            </div>
             
             <div className="p-6 md:p-8 -mt-6 relative z-10">
               <div className="flex flex-wrap gap-2 mb-4">
