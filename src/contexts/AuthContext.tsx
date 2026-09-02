@@ -104,10 +104,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async () => {
     try {
+      // Dynamic origin: automatically uses current Vercel URL on production or localhost in dev
+      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin
+          redirectTo: currentOrigin || undefined,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent'
+          }
         }
       });
 
@@ -122,7 +128,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return { error: null };
     } catch (err: any) {
-      toast.error('Google provider is not enabled in Supabase yet. Please sign up with email below.');
+      toast.error('Google Sign In error. Please sign up with email below.');
       return { error: err };
     }
   };
