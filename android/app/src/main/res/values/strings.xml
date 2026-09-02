@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Defenxia Frontline Guard</string>
-    <string name="title_activity_main">Defenxia Frontline Guard</string>
+    <string name="app_name">DEFENXIA</string>
+    <string name="title_activity_main">DEFENXIA</string>
     <string name="package_name">com.defenxia.security.guard</string>
     <string name="custom_url_scheme">com.defenxia.security.guard</string>
     <string name="accessibility_service_description">Defenxia Secure Banking App Lock monitors your selected banking and sensitive apps to require authorized physical NFC card authentication before allowing access.</string>

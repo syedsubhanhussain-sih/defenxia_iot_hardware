@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.defenxia.security.guard',
-  appName: 'Defenxia Frontline Guard',
+  appName: 'DEFENXIA',
   webDir: 'dist',
   server: {
     cleartext: true,
@@ -13,9 +13,12 @@ const config: CapacitorConfig = {
       enabled: true
     },
     SplashScreen: {
-      launchShowDuration: 2000,
+      launchShowDuration: 2500,
       launchAutoHide: true,
       backgroundColor: "#030712",
+      androidScaleType: "CENTER_CROP",
+      splashFullScreen: true,
+      splashImmersive: true,
       showSpinner: false
     }
   }

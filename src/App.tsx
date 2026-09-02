@@ -39,6 +39,25 @@ const AppContent = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const [showCoverpage, setShowCoverpage] = React.useState(true);
+  const [coverpageFading, setCoverpageFading] = React.useState(false);
+
+  useEffect(() => {
+    // Keep coverpage visible while app initializes, then fade out smoothly
+    const fadeTimer = setTimeout(() => {
+      setCoverpageFading(true);
+    }, 1800);
+
+    const removeTimer = setTimeout(() => {
+      setShowCoverpage(false);
+    }, 2400);
+
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(removeTimer);
+    };
+  }, []);
+
   // Hardware Back Button Navigation Handling (Fixes Issue 10)
   useEffect(() => {
     const handleHardwareBack = () => {
@@ -67,6 +86,19 @@ const AppContent = () => {
 
   return (
     <div className="min-h-screen bg-background pb-16 safe-area-bottom">
+      {showCoverpage && (
+        <div 
+          className={`fixed inset-0 z-[999999] bg-[#030712] flex items-center justify-center transition-opacity duration-600 pointer-events-none ${
+            coverpageFading ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          <img 
+            src="/defenxia-coverpage.png" 
+            alt="DEFENXIA" 
+            className="w-full h-full object-cover select-none"
+          />
+        </div>
+      )}
       <ScrollToTop />
       <AuthModal />
       {isSimulating && <SimulateAttackPanel />}

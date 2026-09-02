@@ -19,7 +19,7 @@ export const Header = () => {
         >
           <Shield className="h-8 w-8 text-primary" />
           <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-primary-glow bg-clip-text text-transparent">
-            Defenxia
+            DEFENXIA
           </h1>
         </button>
         
