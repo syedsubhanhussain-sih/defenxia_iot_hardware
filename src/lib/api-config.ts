@@ -61,8 +61,7 @@ export const getOAuthRedirectUrl = (): string => {
   // In Native Android mobile app:
   if (isNativeAndroid()) {
     // Registered Android custom scheme in AndroidManifest.xml
-    const prodUrl = import.meta.env.VITE_VERCEL_URL || DEFAULT_PRODUCTION_BACKEND_URL;
-    return prodUrl.startsWith('http') ? prodUrl : `https://${prodUrl}`;
+    return 'defenxia://auth/callback';
   }
 
   // In Web browser (Vercel deployment):

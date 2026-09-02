@@ -5,9 +5,13 @@ const config: CapacitorConfig = {
   appName: 'Defenxia Frontline Guard',
   webDir: 'dist',
   server: {
-    cleartext: true
+    cleartext: true,
+    androidScheme: 'https'
   },
   plugins: {
+    CapacitorHttp: {
+      enabled: true
+    },
     SplashScreen: {
       launchShowDuration: 2000,
       launchAutoHide: true,

@@ -54,7 +54,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false);
     });
 
-    // 2. Listen to real-time auth changes
+    // 3. Listen to real-time auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -65,8 +65,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
+    // 4. Listen to Native Deep Links from Android MainActivity (Google OAuth redirect)
+    const handleDeepLink = (event: any) => {
+      const url = event?.detail?.url;
+      if (!url) return;
+      console.log('[DEFENXIA AUTH] Native Deep Link received:', url);
+
+      let tokenString = '';
+      if (url.includes('#')) {
+        tokenString = url.split('#')[1];
+      } else if (url.includes('?')) {
+        tokenString = url.split('?')[1];
+      }
+
+      if (tokenString) {
+        const params = new URLSearchParams(tokenString);
+        const access_token = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
+        if (access_token && refresh_token) {
+          supabase.auth.setSession({ access_token, refresh_token }).then(({ data, error }) => {
+            if (data?.session) {
+              setSession(data.session);
+              setUser(data.session.user);
+              setIsLoading(false);
+              closeAuthModal();
+              toast.success(`Welcome, ${data.session.user.email || 'User'}!`);
+            } else if (error) {
+              console.error('Session setting error from deep link:', error);
+            }
+          });
+        }
+      }
+    };
+
+    window.addEventListener('defenxia:deepLink', handleDeepLink);
+
     return () => {
       subscription.unsubscribe();
+      window.removeEventListener('defenxia:deepLink', handleDeepLink);
     };
   }, []);
 

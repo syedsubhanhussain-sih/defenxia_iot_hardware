@@ -19,6 +19,15 @@
 
   <body>
     <div id="root"></div>
+    <script>
+      (function() {
+        var hash = window.location.hash || '';
+        if ((hash.indexOf('access_token=') !== -1 || hash.indexOf('refresh_token=') !== -1) && /Android/i.test(navigator.userAgent)) {
+          var appUrl = 'defenxia://auth/callback' + hash;
+          window.location.href = appUrl;
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

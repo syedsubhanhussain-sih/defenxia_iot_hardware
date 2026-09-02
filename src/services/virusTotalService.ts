@@ -1,4 +1,5 @@
 import { invokeEdgeFunction } from "@/lib/supabase-client";
+import { Capacitor, CapacitorHttp } from "@capacitor/core";
 
 export interface VTStats {
   malicious: number;
@@ -59,13 +60,21 @@ export async function computeSha256(file: File): Promise<string> {
 }
 
 /**
- * Encodes URL to VirusTotal base64 identifier
+ * Encodes URL to VirusTotal base64 identifier with Unicode safety
  */
 function urlToVtId(url: string): string {
-  return btoa(url)
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
+  try {
+    const safeString = unescape(encodeURIComponent(url));
+    return btoa(safeString)
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  } catch (e) {
+    return btoa(url)
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  }
 }
 
 /**
@@ -82,13 +91,50 @@ export async function scanUrlWithVirusTotal(targetUrl: string): Promise<VTUrlSca
   const scanDate = new Date().toLocaleString();
 
   try {
-    // 1. Direct VirusTotal v3 API Lookup
-    const directRes = await fetch(`https://www.virustotal.com/api/v3/urls/${urlId}`, {
-      headers: { 'x-apikey': apiKey }
-    });
+    // 1. Direct VirusTotal v3 API Lookup (Native CapacitorHttp on mobile, fetch on web)
+    let data: any = null;
+    let isOk = false;
 
-    if (directRes.ok) {
-      const data = await directRes.json();
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const nativeRes = await CapacitorHttp.get({
+          url: `https://www.virustotal.com/api/v3/urls/${urlId}`,
+          headers: { 'x-apikey': apiKey }
+        });
+        if (nativeRes.status >= 200 && nativeRes.status < 300) {
+          data = nativeRes.data;
+          isOk = true;
+        } else if (nativeRes.status === 404) {
+          // Unindexed URL: auto-submit to VirusTotal
+          CapacitorHttp.post({
+            url: 'https://www.virustotal.com/api/v3/urls',
+            headers: {
+              'x-apikey': apiKey,
+              'content-type': 'application/x-www-form-urlencoded'
+            },
+            data: `url=${encodeURIComponent(normalizedUrl)}`
+          }).catch(() => {});
+        }
+      } catch (nativeErr) {
+        console.warn('CapacitorHttp native URL scan error:', nativeErr);
+      }
+    }
+
+    if (!isOk) {
+      try {
+        const directRes = await fetch(`https://www.virustotal.com/api/v3/urls/${urlId}`, {
+          headers: { 'x-apikey': apiKey }
+        });
+        if (directRes.ok) {
+          data = await directRes.json();
+          isOk = true;
+        }
+      } catch (fetchErr) {
+        console.warn('Browser direct fetch error:', fetchErr);
+      }
+    }
+
+    if (isOk && data) {
       const attr = data?.data?.attributes;
       if (attr && attr.last_analysis_stats) {
         const stats: VTStats = attr.last_analysis_stats;
@@ -216,12 +262,39 @@ export async function scanFileWithVirusTotal(file: File): Promise<VTFileScanResu
 
   try {
     // 1. Direct Hash Lookup on VirusTotal v3 API (Instant for known files)
-    const hashRes = await fetch(`https://www.virustotal.com/api/v3/files/${sha256}`, {
-      headers: { 'x-apikey': apiKey }
-    });
+    let data: any = null;
+    let isOk = false;
 
-    if (hashRes.ok) {
-      const data = await hashRes.json();
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const nativeRes = await CapacitorHttp.get({
+          url: `https://www.virustotal.com/api/v3/files/${sha256}`,
+          headers: { 'x-apikey': apiKey }
+        });
+        if (nativeRes.status >= 200 && nativeRes.status < 300) {
+          data = nativeRes.data;
+          isOk = true;
+        }
+      } catch (nativeErr) {
+        console.warn('Native CapacitorHttp file hash error:', nativeErr);
+      }
+    }
+
+    if (!isOk) {
+      try {
+        const hashRes = await fetch(`https://www.virustotal.com/api/v3/files/${sha256}`, {
+          headers: { 'x-apikey': apiKey }
+        });
+        if (hashRes.ok) {
+          data = await hashRes.json();
+          isOk = true;
+        }
+      } catch (webErr) {
+        console.warn('Browser fetch file hash error:', webErr);
+      }
+    }
+
+    if (isOk && data) {
       const attr = data?.data?.attributes;
       if (attr && attr.last_analysis_stats) {
         const stats: VTStats = attr.last_analysis_stats;
