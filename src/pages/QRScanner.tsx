@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +36,7 @@ interface QRScanResult {
   riskMessage: string;
   threats?: string[];
   totalEngines?: number;
+  positives?: number;
 }
 
 const QRScanner = () => {
@@ -49,6 +50,32 @@ const QRScanner = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const qrScannerRef = useRef<QrScanner | null>(null);
 
+  const stopScanning = useCallback(() => {
+    if (qrScannerRef.current) {
+      try {
+        qrScannerRef.current.stop();
+        qrScannerRef.current.destroy();
+      } catch (e) {
+        console.warn('Error destroying QrScanner:', e);
+      }
+      qrScannerRef.current = null;
+    }
+    if (videoRef.current && videoRef.current.srcObject) {
+      try {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch (e) {}
+        });
+      } catch (e) {
+        console.warn('Error stopping video stream tracks:', e);
+      }
+      videoRef.current.srcObject = null;
+    }
+    setIsScanning(false);
+  }, []);
+
   useEffect(() => {
     // Check initial camera permission on Android
     if (isNativeAndroid()) {
@@ -58,12 +85,9 @@ const QRScanner = () => {
     }
 
     return () => {
-      if (qrScannerRef.current) {
-        qrScannerRef.current.stop();
-        qrScannerRef.current.destroy();
-      }
+      stopScanning();
     };
-  }, []);
+  }, [stopScanning]);
 
   const processQrPayload = async (dataString: string) => {
     setIsAnalyzing(true);
@@ -77,12 +101,14 @@ const QRScanner = () => {
     let riskMessage = "";
     let threats: string[] = [];
     let totalEngines = 72;
+    let positives = 0;
 
     if (isUPI) {
       const lower = trimmed.toLowerCase();
       const isSuspiciousUPI = lower.includes('refund') || lower.includes('lottery') || lower.includes('kyc') || lower.includes('claim') || lower.includes('bonus') || lower.includes('reward');
       isSafe = !isSuspiciousUPI;
       vtChecked = true;
+      positives = isSuspiciousUPI ? 2 : 0;
       stats = {
         malicious: isSuspiciousUPI ? 2 : 0,
         suspicious: isSuspiciousUPI ? 1 : 0,
@@ -101,18 +127,21 @@ const QRScanner = () => {
         isSafe = vtResult.isSafe;
         vtChecked = true;
         stats = vtResult.stats;
-        totalEngines = vtResult.totalEngines;
+        totalEngines = vtResult.totalEngines || 72;
+        positives = vtResult.positives ?? (vtResult.stats ? (vtResult.stats.malicious + vtResult.stats.suspicious) : 0);
         threats = vtResult.threats;
         riskMessage = vtResult.analysisMessage;
       } catch (err) {
         console.error("VirusTotal scan error:", err);
         isSafe = true;
         vtChecked = false;
+        positives = 0;
         riskMessage = "Link scanned with heuristic threat intelligence.";
       }
     } else {
       isSafe = true;
       vtChecked = false;
+      positives = 0;
       riskMessage = "Plain text payload (No external web redirects detected).";
     }
 
@@ -125,7 +154,8 @@ const QRScanner = () => {
       stats,
       riskMessage,
       threats,
-      totalEngines
+      totalEngines,
+      positives
     };
 
     setScanResult(finalResult);
@@ -161,7 +191,8 @@ const QRScanner = () => {
   };
 
   const startScanning = async () => {
-    if (!videoRef.current) return;
+    // 1. Release any active camera tracks / locks before starting fresh
+    stopScanning();
 
     // Check & request camera permission on native Android
     if (isNativeAndroid()) {
@@ -184,22 +215,30 @@ const QRScanner = () => {
       }
     }
 
+    if (!videoRef.current) return;
+
     try {
       setIsScanning(true);
       setScanResult(null);
+
+      // Brief delay to allow WebView to lay out the video element
+      await new Promise(r => setTimeout(r, 120));
+
+      if (!videoRef.current) return;
 
       const qrScanner = new QrScanner(
         videoRef.current,
         (result) => {
           const scannedText = result.data;
-          qrScanner.stop();
-          setIsScanning(false);
+          stopScanning();
           processQrPayload(scannedText);
         },
         {
           onDecodeError: () => {},
           highlightScanRegion: true,
           highlightCodeOutline: true,
+          preferredCamera: 'environment',
+          maxScansPerSecond: 10
         }
       );
 
@@ -207,28 +246,19 @@ const QRScanner = () => {
       await qrScanner.start();
     } catch (error: any) {
       console.error("Error starting QR scanner:", error);
-      setIsScanning(false);
+      stopScanning();
       if (error?.name === 'NotAllowedError' || error?.message?.includes('Permission') || error?.message?.includes('denied')) {
         setCameraPermissionGranted(false);
         toast.error("Camera access denied. Please allow camera permission in settings.");
       } else {
         setHasCamera(false);
+        toast.error("Unable to access camera hardware. Please try again.");
       }
     }
   };
 
-  const stopScanning = () => {
-    if (qrScannerRef.current) {
-      qrScannerRef.current.stop();
-    }
-    setIsScanning(false);
-  };
-
   const resetScanner = () => {
-    if (qrScannerRef.current) {
-      qrScannerRef.current.stop();
-    }
-    setIsScanning(false);
+    stopScanning();
     setScanResult(null);
     setManualInput("");
   };
@@ -279,6 +309,9 @@ const QRScanner = () => {
             <video
               ref={videoRef}
               className="w-full h-full object-cover rounded-xl"
+              playsInline
+              muted
+              autoPlay
               style={{ display: isScanning ? 'block' : 'none' }}
             />
             
@@ -328,6 +361,7 @@ const QRScanner = () => {
                   status={scanResult.isSafe ? 'safe' : 'malicious'}
                   title={scanResult.isSafe ? 'QR Code Verified Safe' : 'Malicious QR Threat Blocked'}
                   subtitle={scanResult.riskMessage}
+                  positives={scanResult.positives ?? (scanResult.stats ? (scanResult.stats.malicious + scanResult.stats.suspicious) : 0)}
                   totalEngines={scanResult.totalEngines || 72}
                 />
                 <p className="text-xs text-muted-foreground max-w-md break-all font-mono bg-black/60 px-3 py-1.5 rounded-lg border border-white/10 mt-1">
