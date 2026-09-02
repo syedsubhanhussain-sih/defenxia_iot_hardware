@@ -1,0 +1,20 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/leakcheck/public",
+      "destination": "/api/leakcheck"
+    },
+    {
+      "source": "/api/leakcheck",
+      "destination": "/api/leakcheck"
+    },
+    {
+      "source": "/api/virustotal",
+      "destination": "/api/virustotal"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

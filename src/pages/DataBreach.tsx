@@ -42,65 +42,70 @@ interface LeakCheckResponse {
 async function fetchLeakCheckData(query: string, apiKey: string): Promise<LeakCheckResponse> {
   const cleanQuery = query.trim();
 
-  // Attempt 1: Local Vite Proxy (zero CORS issues in dev)
+  // Attempt 1: Serverless proxy / Vite Proxy (/api/leakcheck)
   try {
-    const localUrl = `/api/leakcheck/public?check=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
+    const localUrl = `/api/leakcheck?check=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
     const res = await fetch(localUrl);
     if (res.ok) {
       const data = await res.json();
-      if (data.success !== false) {
+      if (data && data.success !== false) {
         return {
           success: true,
-          found: data.found || (data.sources ? data.sources.length : 0),
+          found: data.found !== undefined ? data.found : (data.sources ? data.sources.length : 0),
           fields: data.fields || [],
           sources: data.sources || []
         };
       }
     }
   } catch (e) {
-    console.warn("Vite proxy attempt failed, trying fallback proxy...", e);
+    console.warn("API attempt 1 failed:", e);
   }
 
-  // Attempt 2: CORS Proxy Fallback
+  // Attempt 2: Legacy path /api/leakcheck/public
   try {
-    const corsProxyUrl = `https://corsproxy.io/?${encodeURIComponent(`https://leakcheck.io/api/public?check=${cleanQuery}&key=${apiKey}`)}`;
-    const res = await fetch(corsProxyUrl);
+    const localUrl2 = `/api/leakcheck/public?check=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
+    const res = await fetch(localUrl2);
     if (res.ok) {
       const data = await res.json();
-      if (data.success !== false) {
+      if (data && data.success !== false) {
         return {
           success: true,
-          found: data.found || (data.sources ? data.sources.length : 0),
+          found: data.found !== undefined ? data.found : (data.sources ? data.sources.length : 0),
           fields: data.fields || [],
           sources: data.sources || []
         };
       }
     }
   } catch (e) {
-    console.warn("CORS proxy attempt failed, trying Edge Function...", e);
+    console.warn("API attempt 2 failed:", e);
   }
 
-  // Attempt 3: Supabase Edge Function
+  // Attempt 3: Direct API call
   try {
-    const res = await invokeEdgeFunction<LeakCheckResponse>('check-data-breach', { query: cleanQuery });
-    if (res?.data && res.data.success !== false) {
-      return {
-        success: true,
-        found: res.data.found || (res.data.sources ? res.data.sources.length : 0),
-        fields: res.data.fields || [],
-        sources: res.data.sources || []
-      };
+    const directUrl = `https://leakcheck.io/api/public?check=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
+    const res = await fetch(directUrl);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success !== false) {
+        return {
+          success: true,
+          found: data.found !== undefined ? data.found : (data.sources ? data.sources.length : 0),
+          fields: data.fields || [],
+          sources: data.sources || []
+        };
+      }
     }
   } catch (e) {
-    console.warn("Edge function attempt failed:", e);
+    console.warn("Direct attempt failed:", e);
   }
 
-  // If no breaches found or clean record
+  // If network failure on all endpoints
   return {
-    success: true,
+    success: false,
     found: 0,
     fields: [],
-    sources: []
+    sources: [],
+    error: "Unable to reach LeakCheck API. If you just pushed to Vercel, please wait for the deployment to finish."
   };
 }
 
@@ -126,6 +131,13 @@ const DataBreach = () => {
 
     try {
       const result = await fetchLeakCheckData(cleanQuery, apiKey);
+      
+      if (!result.success && result.error) {
+        toast.error(result.error);
+        setScanResult(null);
+        return;
+      }
+
       setScanResult(result);
 
       // Save to Supabase data_breach_results table for Report & Analysis

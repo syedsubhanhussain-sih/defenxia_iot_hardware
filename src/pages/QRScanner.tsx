@@ -82,6 +82,31 @@ async function checkWithVirusTotal(payload: string, apiKey: string): Promise<{ i
   const base64UrlId = btoa(targetUrl).replace(/=/g, '');
 
   try {
+    // Attempt 1: Vercel Serverless proxy (/api/virustotal)
+    try {
+      const res = await fetch(`/api/virustotal?url=${encodeURIComponent(targetUrl)}`, {
+        headers: { 'x-apikey': apiKey }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.data?.attributes?.last_analysis_stats) {
+          const stats: VTAnalysisStats = json.data.attributes.last_analysis_stats;
+          const isMalicious = stats.malicious > 0 || stats.suspicious > 1;
+          return {
+            isSafe: !isMalicious,
+            vtChecked: true,
+            stats,
+            message: isMalicious 
+              ? `VirusTotal Alert: Flagged as malicious by ${stats.malicious} security vendor(s)!`
+              : `Verified Clean: 0 malicious detections across ${stats.harmless + stats.undetected} security engines.`
+          };
+        }
+      }
+    } catch (e) {
+      console.warn("VirusTotal proxy attempt failed, falling back to direct/edge call...");
+    }
+
+    // Attempt 2: Direct API call
     const vtEndpoint = `https://www.virustotal.com/api/v3/urls/${base64UrlId}`;
     const res = await fetch(vtEndpoint, {
       headers: {

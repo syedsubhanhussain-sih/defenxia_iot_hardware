@@ -12,8 +12,11 @@ export default defineConfig(({ mode }) => ({
       '/api/leakcheck': {
         target: 'https://leakcheck.io/api',
         changeOrigin: true,
-        secure: false,
-        rewrite: (path) => path.replace(/^\/api\/leakcheck/, '')
+        rewrite: (path) => {
+          const withoutPrefix = path.replace(/^\/api\/leakcheck/, '');
+          if (withoutPrefix.startsWith('/public')) return withoutPrefix;
+          return '/public' + withoutPrefix;
+        }
       }
     }
   },
