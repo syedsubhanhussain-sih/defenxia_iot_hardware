@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_locked_app_card"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <!-- Dynamic Application Icon -->
+    <ImageView
+        android:id="@+id/ivHeaderAppIcon"
+        android:layout_width="38dp"
+        android:layout_height="38dp"
+        android:layout_marginEnd="12dp"
+        android:contentDescription="Protected App Icon"
+        android:scaleType="fitCenter" />
+
+    <!-- Application Identity Text -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvHeaderAppName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:maxWidth="220dp"
+            android:text="Protected Application"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <View
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginEnd="5dp"
+                android:background="@drawable/bg_status_dot_ready" />
+
+            <TextView
+                android:id="@+id/tvHeaderBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:letterSpacing="0.08"
+                android:text="DEFENXIA SHIELDED"
+                android:textColor="#67E8F9"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+
+</LinearLayout>

@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { insertWithSession, invokeEdgeFunction } from "@/lib/supabase-client";
+import { buildApiUrl } from "@/lib/api-config";
 import { toast } from "sonner";
 
 interface BreachSource {
@@ -42,10 +43,13 @@ interface LeakCheckResponse {
 async function fetchLeakCheckData(query: string, apiKey: string): Promise<LeakCheckResponse> {
   const cleanQuery = query.trim();
 
-  // Attempt 1: Serverless proxy / Vite Proxy (/api/leakcheck)
+  // Tier 1: Configured Production Vercel Serverless proxy (or Vite proxy in dev)
   try {
-    const localUrl = `/api/leakcheck?check=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
-    const res = await fetch(localUrl);
+    const backendEndpoint = buildApiUrl(`/api/leakcheck?check=${encodeURIComponent(cleanQuery)}&key=${apiKey}`);
+    console.log('[DEFENXIA BREACH] Querying backend endpoint:', backendEndpoint);
+    const res = await fetch(backendEndpoint, {
+      headers: { 'Accept': 'application/json' }
+    });
     if (res.ok) {
       const data = await res.json();
       if (data && data.success !== false) {
@@ -58,29 +62,25 @@ async function fetchLeakCheckData(query: string, apiKey: string): Promise<LeakCh
       }
     }
   } catch (e) {
-    console.warn("API attempt 1 failed:", e);
+    console.warn("Vercel backend proxy attempt failed, falling back to Supabase Edge Function:", e);
   }
 
-  // Attempt 2: Legacy path /api/leakcheck/public
+  // Tier 2: Deployed Supabase Edge Function (Never blocked by CORS, uses server-side token)
   try {
-    const localUrl2 = `/api/leakcheck/public?check=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
-    const res = await fetch(localUrl2);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success !== false) {
-        return {
-          success: true,
-          found: data.found !== undefined ? data.found : (data.sources ? data.sources.length : 0),
-          fields: data.fields || [],
-          sources: data.sources || []
-        };
-      }
+    const res = await invokeEdgeFunction<any>('check-data-breach', { query: cleanQuery });
+    if (res?.data && res.data.success !== false) {
+      return {
+        success: true,
+        found: res.data.found !== undefined ? res.data.found : (res.data.sources ? res.data.sources.length : 0),
+        fields: res.data.fields || [],
+        sources: res.data.sources || []
+      };
     }
   } catch (e) {
-    console.warn("API attempt 2 failed:", e);
+    console.warn("Supabase Edge Function attempt failed, falling back to direct/cors proxy:", e);
   }
 
-  // Attempt 3: Direct API call
+  // Tier 3: Direct API / CORS proxy fallback
   try {
     const directUrl = `https://leakcheck.io/api/public?check=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
     const res = await fetch(directUrl);
@@ -99,13 +99,13 @@ async function fetchLeakCheckData(query: string, apiKey: string): Promise<LeakCh
     console.warn("Direct attempt failed:", e);
   }
 
-  // If network failure on all endpoints
+  // If network failure across all tiers
   return {
     success: false,
     found: 0,
     fields: [],
     sources: [],
-    error: "Unable to reach LeakCheck API. If you just pushed to Vercel, please wait for the deployment to finish."
+    error: "Unable to connect to Defenxia breach check service. Please check your internet connection and try again."
   };
 }
 

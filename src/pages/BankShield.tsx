@@ -34,7 +34,11 @@ import {
   Activity,
   Zap,
   RefreshCw,
-  Play
+  Play,
+  CheckCircle,
+  AlertTriangle,
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -45,13 +49,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { invokeEdgeFunction, queryWithSession, insertWithSession } from '@/lib/supabase-client';
 import { useSerialPort } from '@/hooks/useSerialPort';
 import { useBluetoothService } from '@/hooks/useBluetoothService';
+import { 
+  nativeNfcService, 
+  isNativeAndroid, 
+  InstalledApp, 
+  CardDetectionEvent 
+} from '@/services/nativeNfcService';
 import { toast } from 'sonner';
 import { format, formatDistanceToNow } from 'date-fns';
 
 type ViewState = 
   | 'dashboard' 
-  | 'register-rfid' 
+  | 'nfc-tester'
+  | 'authorized-cards'
   | 'register-apps' 
+  | 'permissions-guide'
+  | 'iot-hardware-check'
+  | 'register-rfid' 
   | 'connect-hardware' 
   | 'verify' 
   | 'session' 
@@ -85,64 +99,80 @@ interface SessionRecord {
 }
 
 const DEFAULT_BANKING_APPS: BankingApp[] = [
+  { id: 'whatsapp', name: 'WhatsApp', package: 'com.whatsapp', iconBg: 'bg-emerald-600', enabled: true },
   { id: 'phonepe', name: 'PhonePe UPI', package: 'com.phonepe.app', iconBg: 'bg-purple-600', enabled: true },
   { id: 'gpay', name: 'Google Pay', package: 'com.google.android.apps.nbu.paisa.user', iconBg: 'bg-blue-600', enabled: true },
   { id: 'paytm', name: 'Paytm Payments', package: 'net.one97.paytm', iconBg: 'bg-cyan-600', enabled: true },
   { id: 'bhim', name: 'BHIM NPCI', package: 'in.org.npci.upiapp', iconBg: 'bg-emerald-600', enabled: true },
   { id: 'sbi', name: 'SBI YONO', package: 'com.sbi.lotusintouch', iconBg: 'bg-blue-800', enabled: true },
-  { id: 'hdfc', name: 'HDFC MobileBanking', package: 'com.snapwork.hdfc', iconBg: 'bg-red-700', enabled: false },
-  { id: 'icici', name: 'ICICI iMobile', package: 'com.csam.icici.bank.imobile', iconBg: 'bg-amber-600', enabled: false },
-  { id: 'canara', name: 'Canara ai1', package: 'com.canarabank.mobility', iconBg: 'bg-blue-500', enabled: false }
+  { id: 'gmail', name: 'Gmail', package: 'com.google.android.gm', iconBg: 'bg-red-600', enabled: true },
+  { id: 'chrome', name: 'Google Chrome', package: 'com.android.chrome', iconBg: 'bg-amber-600', enabled: false }
 ];
 
 const DEFAULT_RFID_CARDS: RFIDCard[] = [
-  { id: 'card-1', uid: 'DEMO_CARD_001', owner_name: 'Primary Security KeyCard', status: 'active', created_at: new Date().toISOString() },
-  { id: 'card-2', uid: 'A1B2C3D4', owner_name: 'Rural APMC Merchant Card', status: 'active', created_at: new Date(Date.now() - 86400000).toISOString() }
+  { id: 'card-1', uid: '97:B4:E9:00', owner_name: 'Blue Security KeyFob (Primary)', status: 'active', created_at: new Date().toISOString() },
+  { id: 'card-2', uid: 'A1:B2:C3:D4', owner_name: 'White Security Card', status: 'active', created_at: new Date(Date.now() - 86400000).toISOString() }
 ];
 
-const ARDUINO_SKETCH_CODE = `/*
- * DEFENXIA — Rural Banking Security Firmware
- * Hardware: Arduino UNO + RC522 RFID + HC-05 Bluetooth
- */
-#include <SPI.h>
+const ARDUINO_RC522_SKETCH = `#include <SPI.h>
 #include <MFRC522.h>
-#include <SoftwareSerial.h>
 
+#define SS_PIN 10
 #define RST_PIN 9
-#define SS_PIN  10
-SoftwareSerial bluetooth(2, 3); // RX=D2, TX=D3
+
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 
 void setup() {
   Serial.begin(9600);
-  bluetooth.begin(9600);
+  delay(300);
   SPI.begin();
   mfrc522.PCD_Init();
-  Serial.println("DEFENXIA_HARDWARE_READY:9600");
-  bluetooth.println("DEFENXIA_HARDWARE_READY:9600");
+  delay(50);
+  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
+  Serial.println("DEFENXIA_RC522_READY");
 }
 
 void loop() {
-  if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial()) return;
-  
-  String uid = "";
+  if (!mfrc522.PICC_IsNewCardPresent()) return;
+  if (!mfrc522.PICC_ReadCardSerial()) return;
+
+  Serial.print("CARD_UID:");
   for (byte i = 0; i < mfrc522.uid.size; i++) {
-    if (mfrc522.uid.uidByte[i] < 0x10) uid += "0";
-    uid += String(mfrc522.uid.uidByte[i], HEX);
+    if (mfrc522.uid.uidByte[i] < 0x10) Serial.print("0");
+    Serial.print(mfrc522.uid.uidByte[i], HEX);
+    if (i < mfrc522.uid.size - 1) Serial.print(":");
   }
-  uid.toUpperCase();
-  
-  Serial.println("AUTHORIZED:" + uid);
-  bluetooth.println("AUTHORIZED:" + uid);
-  
+  Serial.println();
+  Serial.flush();
+
   mfrc522.PICC_HaltA();
   mfrc522.PCD_StopCrypto1();
-  delay(1000);
+  delay(500);
 }`;
 
 export default function BankShield() {
   const [activeView, setActiveView] = useState<ViewState>('dashboard');
   
+  // Platform & Native State
+  const [isAndroidPlatform, setIsAndroidPlatform] = useState(false);
+  const [nfcState, setNfcState] = useState({ available: false, enabled: false });
+  const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
+  const [loadingInstalledApps, setLoadingInstalledApps] = useState(false);
+  const [permissionStatus, setPermissionStatus] = useState({ accessibilityGranted: false, overlayGranted: false });
+
+  // Authorized Physical Cards
+  const [blueCardUid, setBlueCardUid] = useState('97:B4:E9:00');
+  const [whiteCardUid, setWhiteCardUid] = useState('');
+  const [showBlueUid, setShowBlueUid] = useState(false);
+  const [showWhiteUid, setShowWhiteUid] = useState(false);
+  const [editingCardSlot, setEditingCardSlot] = useState<'blue' | 'white' | null>(null);
+  const [cardEditInput, setCardEditInput] = useState('');
+
+  // NFC Card Tester state
+  const [testerStatus, setTesterStatus] = useState<'idle' | 'waiting' | 'detected'>('idle');
+  const [detectedCard, setDetectedCard] = useState<CardDetectionEvent | null>(null);
+  const testerStopRef = useRef<(() => void) | null>(null);
+
   // Apps & Cards state
   const [bankingApps, setBankingApps] = useState<BankingApp[]>(DEFAULT_BANKING_APPS);
   const [rfidCards, setRfidCards] = useState<RFIDCard[]>(DEFAULT_RFID_CARDS);
@@ -157,7 +187,7 @@ export default function BankShield() {
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number>(300); // 5 minutes (300s)
   const [activeSessionBank, setActiveSessionBank] = useState('PhonePe UPI');
-  const [activeSessionUid, setActiveSessionUid] = useState('DEMO_CARD_001');
+  const [activeSessionUid, setActiveSessionUid] = useState('97:B4:E9:00');
 
   // Verification state machine
   const [verifyState, setVerifyState] = useState<'waiting' | 'reading' | 'authorized' | 'denied'>('waiting');
@@ -165,16 +195,251 @@ export default function BankShield() {
 
   // Hardware connections
   const [hardwareMode, setHardwareMode] = useState<'usb' | 'bluetooth'>('usb');
-  const [copiedSketch, setCopiedSketch] = useState(false);
 
   // Hooks
   const serial = useSerialPort();
   const bluetooth = useBluetoothService();
 
-  // Load state on mount
+  // IoT Hardware Check State (Arduino UNO + RC522)
+  const [iotTapState, setIotTapState] = useState<'idle' | 'reading' | 'success'>('idle');
+  const [scannedIotCard, setScannedIotCard] = useState<{
+    uid: string;
+    cardName: string;
+    timestamp: string;
+    protocol: string;
+  } | null>(null);
+  const [copiedArduinoCode, setCopiedArduinoCode] = useState(false);
+  const [serialLogs, setSerialLogs] = useState<Array<{ id: string; time: string; text: string; isUid?: boolean }>>([
+    { id: 'init-1', time: new Date().toLocaleTimeString(), text: 'RC522 Web Serial Driver Initialized (9600 Baud).' }
+  ]);
+
+  // Universal RFID UID extractor that handles every known Arduino RC522 output format
+  const parseAnyRfidUid = (input: string): string | null => {
+    if (!input) return null;
+    const str = input.trim();
+
+    // Pattern 1: 4-byte or 7-byte hex separated by colons, spaces, or hyphens
+    // e.g. "97:B4:E9:00", "97 B4 E9 00", "97-B4-E9-00", "04:12:34:56:78:9A:BC"
+    const sepMatch = str.match(/([0-9A-Fa-f]{2}[:\s\-][0-9A-Fa-f]{2}[:\s\-][0-9A-Fa-f]{2}[:\s\-][0-9A-Fa-f]{2}(?:[:\s\-][0-9A-Fa-f]{2}[:\s\-][0-9A-Fa-f]{2}[:\s\-][0-9A-Fa-f]{2})?)/);
+    if (sepMatch && sepMatch[1]) {
+      return sepMatch[1].trim().replace(/[\s\-]+/g, ':').toUpperCase();
+    }
+
+    // Pattern 2: Continuous 8 or 14 hex characters (e.g. "CARD_UID:97B4E900", "97B4E900")
+    const hexMatch = str.match(/(?:CARD_UID|UID|AUTHORIZED|DENIED)?[ :]*([0-9A-Fa-f]{8}|[0-9A-Fa-f]{14})\b/i);
+    if (hexMatch && hexMatch[1]) {
+      const raw = hexMatch[1].toUpperCase();
+      return raw.match(/.{1,2}/g)?.join(':') || raw;
+    }
+
+    // Pattern 3: Any raw 8 hex characters anywhere in message
+    const generalHex = str.match(/\b([0-9A-Fa-f]{8})\b/);
+    if (generalHex && generalHex[1]) {
+      const raw = generalHex[1].toUpperCase();
+      return raw.match(/.{1,2}/g)?.join(':') || raw;
+    }
+
+    // Pattern 4: Decimal byte array (e.g. "151 180 233 0" or "151, 180, 233, 0")
+    const decMatch = str.match(/\b(\d{1,3})[,\s]+(\d{1,3})[,\s]+(\d{1,3})[,\s]+(\d{1,3})\b/);
+    if (decMatch && decMatch[1] && decMatch[2] && decMatch[3] && decMatch[4]) {
+      const b1 = parseInt(decMatch[1], 10);
+      const b2 = parseInt(decMatch[2], 10);
+      const b3 = parseInt(decMatch[3], 10);
+      const b4 = parseInt(decMatch[4], 10);
+      if (b1 <= 255 && b2 <= 255 && b3 <= 255 && b4 <= 255) {
+        return [b1, b2, b3, b4].map(b => b.toString(16).padStart(2, '0')).join(':').toUpperCase();
+      }
+    }
+
+    return null;
+  };
+
+  const processIncomingSerial = useCallback((rawMsg: string) => {
+    const clean = rawMsg.trim();
+    if (!clean) return;
+
+    console.log('[DEFENXIA ARDUINO RC522 RX]:', clean);
+    const detectedUid = parseAnyRfidUid(clean);
+
+    // Always log to terminal monitor
+    setSerialLogs(prev => [
+      ...prev.slice(-35),
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        time: new Date().toLocaleTimeString(),
+        text: `RX: ${clean}`,
+        isUid: !!detectedUid
+      }
+    ]);
+
+    if (detectedUid) {
+      const rawUid = detectedUid.toUpperCase();
+      const cleanCompact = rawUid.replace(/:/g, '');
+      const isBlue = cleanCompact === '97B4E900' || blueCardUid.replace(/:/g, '') === cleanCompact;
+      const isWhite = whiteCardUid && whiteCardUid.replace(/[:\-\s]/g, '').toUpperCase() === cleanCompact;
+      const cardName = isBlue 
+        ? 'Authorized Blue KeyFob (97:B4:E9:00)' 
+        : isWhite 
+        ? `Authorized White Security Card (${whiteCardUid})` 
+        : `RFID Card (${rawUid})`;
+
+      setScannedIotCard({
+        uid: rawUid,
+        cardName,
+        timestamp: new Date().toLocaleTimeString(),
+        protocol: rawUid.split(':').length === 7 ? 'ISO 14443-3A (NTAG / Ultralight 7-Byte)' : 'ISO 14443-3A (MIFARE Classic 1K)'
+      });
+      setIotTapState('success');
+      toast.success(`RFID Tap Successful! ${cardName} detected.`);
+    }
+  }, [blueCardUid, whiteCardUid]);
+
+  // Channel 1: Register callback with serial hook
   useEffect(() => {
-    loadSavedData();
-  }, []);
+    if (activeView === 'iot-hardware-check' && serial.isConnected) {
+      serial.startListening(processIncomingSerial);
+    }
+  }, [activeView, serial.isConnected, processIncomingSerial, serial.startListening]);
+
+  // Channel 2: Reactively process serial.lastMessage
+  useEffect(() => {
+    if (activeView === 'iot-hardware-check' && serial.lastMessage) {
+      processIncomingSerial(serial.lastMessage);
+    }
+  }, [activeView, serial.lastMessage, processIncomingSerial]);
+
+  const handleSimulateIotTap = (uid = '97:B4:E9:00') => {
+    setIotTapState('reading');
+    const nowStr = new Date().toLocaleTimeString();
+    setSerialLogs(prev => [
+      ...prev.slice(-35),
+      {
+        id: `${Date.now()}-1`,
+        time: nowStr,
+        text: 'RX: CARD_DETECTED (MIFARE Classic 1K)'
+      },
+      {
+        id: `${Date.now()}-2`,
+        time: nowStr,
+        text: `RX: CARD_UID:${uid}`,
+        isUid: true
+      }
+    ]);
+
+    setTimeout(() => {
+      setScannedIotCard({
+        uid,
+        cardName: 'Authorized Blue KeyFob (97:B4:E9:00)',
+        timestamp: new Date().toLocaleTimeString(),
+        protocol: 'ISO 14443-3A (MIFARE Classic 1K)'
+      });
+      setIotTapState('success');
+      toast.success("RFID Tap Successful! Card Verified");
+    }, 400);
+  };
+
+  // Initialize Native / Web capabilities & cache
+  useEffect(() => {
+    const isNative = isNativeAndroid();
+    setIsAndroidPlatform(isNative);
+
+    // Scroll view to top whenever active view changes
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+
+    if (isNative) {
+      // 1. Immediately read cached installed apps from localStorage (0ms delay)
+      try {
+        const cached = localStorage.getItem('defenxia_installed_apps_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setInstalledApps(parsed);
+          }
+        }
+      } catch (e) {
+        console.warn('Error reading installed apps cache:', e);
+      }
+
+      loadNativeData();
+    } else {
+      loadSavedData();
+    }
+  }, [activeView]);
+
+  // Listen to Window Focus and App Lifecycle to automatically refresh permissions after returning from Settings
+  useEffect(() => {
+    const refreshPermissions = async () => {
+      if (isNativeAndroid()) {
+        try {
+          const perms = await nativeNfcService.checkPermissions();
+          setPermissionStatus(perms);
+          const nfc = await nativeNfcService.getNfcStatus();
+          setNfcState(nfc);
+        } catch (e) {
+          console.warn('Error refreshing permissions on resume:', e);
+        }
+      }
+    };
+
+    const handleSubViewBack = (e: Event) => {
+      if (activeView !== 'dashboard') {
+        e.preventDefault();
+        setActiveView('dashboard');
+      }
+    };
+
+    window.addEventListener('focus', refreshPermissions);
+    window.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        refreshPermissions();
+      }
+    });
+    window.addEventListener('defenxia:subViewBack', handleSubViewBack);
+
+    return () => {
+      window.removeEventListener('focus', refreshPermissions);
+      window.removeEventListener('defenxia:subViewBack', handleSubViewBack);
+    };
+  }, [activeView]);
+
+  const loadNativeData = async () => {
+    try {
+      const status = await nativeNfcService.getNfcStatus();
+      setNfcState(status);
+
+      const cards = await nativeNfcService.getAuthorizedCards();
+      if (cards) {
+        if (cards.blueCard.registered) setBlueCardUid(cards.blueCard.uidMasked);
+        if (cards.whiteCard.registered) setWhiteCardUid(cards.whiteCard.uidMasked);
+      }
+
+      const perms = await nativeNfcService.checkPermissions();
+      setPermissionStatus(perms);
+
+      loadNativeInstalledApps();
+    } catch (e) {
+      console.error('Error loading native data:', e);
+    }
+  };
+
+  const loadNativeInstalledApps = async (force = false) => {
+    setLoadingInstalledApps(true);
+    try {
+      const apps = await nativeNfcService.getInstalledApps(force);
+      if (apps && apps.length > 0) {
+        setInstalledApps(apps);
+        try {
+          localStorage.setItem('defenxia_installed_apps_cache', JSON.stringify(apps));
+        } catch (e) {
+          // LocalStorage quota may be exceeded for large icon sets, safe to ignore
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch installed apps:', err);
+    } finally {
+      setLoadingInstalledApps(false);
+    }
+  };
 
   const loadSavedData = async () => {
     try {
@@ -221,7 +486,7 @@ export default function BankShield() {
       if (trimmed.startsWith('AUTHORIZED:')) uid = trimmed.replace('AUTHORIZED:', '');
       else if (trimmed.startsWith('CARD_READ:')) uid = trimmed.replace('CARD_READ:', '');
       else if (trimmed.startsWith('DENIED:')) uid = trimmed.replace('DENIED:', '');
-      else if (/^[A-F0-9]{8,16}$/.test(trimmed)) uid = trimmed;
+      else if (/^[A-F0-9:]{8,16}$/.test(trimmed)) uid = trimmed;
 
       if (uid) {
         setNewCardUid(uid);
@@ -236,18 +501,20 @@ export default function BankShield() {
       if (trimmed.startsWith('AUTHORIZED:')) uid = trimmed.replace('AUTHORIZED:', '');
       else if (trimmed.startsWith('CARD_READ:')) uid = trimmed.replace('CARD_READ:', '');
       else if (trimmed.startsWith('DENIED:')) uid = trimmed.replace('DENIED:', '');
-      else if (/^[A-F0-9]{8,16}$/.test(trimmed)) uid = trimmed;
+      else if (/^[A-F0-9:]{8,16}$/.test(trimmed)) uid = trimmed;
 
       setVerifyState('reading');
       
       setTimeout(async () => {
-        // Verify with Supabase rfid_cards
-        const isAuthorizedCard = rfidCards.some(
-          c => c.status === 'active' && c.uid.toUpperCase() === (uid || 'DEMO_CARD_001').toUpperCase()
-        ) || trimmed.startsWith('AUTHORIZED:');
+        // Verify with authorized cards
+        const isAuthorizedCard = 
+          uid.replace(/:/g, '') === blueCardUid.replace(/:/g, '') ||
+          uid.replace(/:/g, '') === whiteCardUid.replace(/:/g, '') ||
+          rfidCards.some(c => c.status === 'active' && c.uid.replace(/:/g, '').toUpperCase() === (uid || '97B4E900').replace(/:/g, '').toUpperCase()) ||
+          trimmed.startsWith('AUTHORIZED:');
 
         if (isAuthorizedCard) {
-          const finalUid = uid || 'DEMO_CARD_001';
+          const finalUid = uid || '97:B4:E9:00';
           setVerifiedCardUid(finalUid);
           setVerifyState('authorized');
           toast.success('RFID Card Authenticated! Unlocking Secure Banking.');
@@ -277,7 +544,7 @@ export default function BankShield() {
         }
       }, 800);
     }
-  }, [activeView, rfidCards, activeSessionBank]);
+  }, [activeView, rfidCards, activeSessionBank, blueCardUid, whiteCardUid]);
 
   // Connect serial & bluetooth listeners
   useEffect(() => {
@@ -309,7 +576,43 @@ export default function BankShield() {
     return () => clearInterval(interval);
   }, [isSessionActive]);
 
-  // Toggle Banking App
+  // Start & Stop NFC Card Tester
+  const startNfcTester = async () => {
+    setTesterStatus('waiting');
+    setDetectedCard(null);
+
+    if (isNativeAndroid()) {
+      try {
+        const cleanup = await nativeNfcService.startCardTester((event: CardDetectionEvent) => {
+          setDetectedCard(event);
+          setTesterStatus('detected');
+          if (event.authorized) {
+            toast.success(`Authorized Card Detected: ${event.cardName} (${event.uid})`);
+          } else {
+            toast.error(`Unauthorized Card: ${event.uid}`);
+          }
+        });
+        testerStopRef.current = cleanup;
+      } catch (err) {
+        toast.error('Failed to engage NFC hardware reader');
+      }
+    }
+  };
+
+  const stopNfcTester = () => {
+    if (testerStopRef.current) {
+      testerStopRef.current();
+      testerStopRef.current = null;
+    }
+    setTesterStatus('idle');
+  };
+
+  const resetNfcTester = () => {
+    setDetectedCard(null);
+    startNfcTester();
+  };
+
+  // Toggle App Protection
   const handleToggleApp = async (appId: string) => {
     const updated = bankingApps.map(app => 
       app.id === appId ? { ...app, enabled: !app.enabled } : app
@@ -331,7 +634,41 @@ export default function BankShield() {
     }
   };
 
-  // Register New RFID Card
+  const handleToggleNativeApp = async (packageName: string) => {
+    const updated = installedApps.map(app => 
+      app.packageName === packageName ? { ...app, isProtected: !app.isProtected } : app
+    );
+    setInstalledApps(updated);
+
+    const protectedPackages = updated.filter(a => a.isProtected).map(a => a.packageName);
+    await nativeNfcService.setProtectedApps(protectedPackages);
+    toast.success(`Protection updated for ${packageName}`);
+  };
+
+  // Save / Update Card UID
+  const handleSaveCardSlot = async () => {
+    if (!editingCardSlot || !cardEditInput.trim()) return;
+    const cleanUid = cardEditInput.trim().toUpperCase();
+
+    if (editingCardSlot === 'blue') {
+      setBlueCardUid(cleanUid);
+      if (isNativeAndroid()) {
+        await nativeNfcService.registerCard('blue', cleanUid);
+      }
+      toast.success(`Blue Card UID updated to ${cleanUid}`);
+    } else {
+      setWhiteCardUid(cleanUid);
+      if (isNativeAndroid()) {
+        await nativeNfcService.registerCard('white', cleanUid);
+      }
+      toast.success(`White Card UID updated to ${cleanUid}`);
+    }
+
+    setEditingCardSlot(null);
+    setCardEditInput('');
+  };
+
+  // Register New RFID Card in Supabase
   const handleSaveCard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCardUid.trim() || !newCardOwner.trim()) {
@@ -366,27 +703,30 @@ export default function BankShield() {
     }
   };
 
-  // Delete RFID Card
   const handleDeleteCard = (uid: string) => {
     setRfidCards(prev => prev.filter(c => c.uid !== uid));
     toast.success(`RFID Card ${uid} removed from authorized list.`);
   };
 
-  // Trigger Verification Overlay
   const startVerification = (bankName: string = 'PhonePe UPI') => {
     setActiveSessionBank(bankName);
     setVerifyState('waiting');
     setActiveView('verify');
   };
 
-  // Format Timer mm:ss
   const formatTimer = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const isHardwareConnected = serial.isConnected || bluetooth.isConnected;
+  const formatSafeDate = (dateStr: string) => {
+    try {
+      return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
+    } catch {
+      return 'recently';
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background pb-20 relative overflow-hidden">
@@ -402,7 +742,7 @@ export default function BankShield() {
         {activeView === 'dashboard' && (
           <div className="space-y-8 animate-fade-in">
             
-            {/* Header with Title & Hardware Status Badges */}
+            {/* Header with Title & Live Hardware Status Badges */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
                 <div className="p-3.5 rounded-2xl bg-purple-600/20 text-purple-400 border border-purple-500/30 shadow-[0_0_20px_rgba(139,92,246,0.35)]">
@@ -412,19 +752,26 @@ export default function BankShield() {
                   <h1 className="text-2xl sm:text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-purple-100 to-cyan-300 bg-clip-text text-transparent">
                     Secure Banking Mode
                   </h1>
-                  <p className="text-muted-foreground text-xs sm:text-sm">Hardware-authenticated banking session protection</p>
+                  <p className="text-muted-foreground text-xs sm:text-sm">Hardware-authenticated NFC App Lock & session protection</p>
                 </div>
               </div>
 
-              {/* Live Connection Badges */}
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className={`px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1.5 ${serial.isConnected ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-white/5 text-muted-foreground border-white/10'}`}>
-                  <Usb size={12} className={serial.isConnected ? 'text-emerald-400' : ''} />
-                  {serial.isConnected ? 'USB Serial Active' : 'USB Disconnected'}
-                </Badge>
-                <Badge variant="outline" className={`px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1.5 ${bluetooth.isConnected ? 'bg-blue-500/15 text-cyan-300 border-blue-500/30' : 'bg-white/5 text-muted-foreground border-white/10'}`}>
-                  <Bluetooth size={12} className={bluetooth.isConnected ? 'text-cyan-300' : ''} />
-                  {bluetooth.isConnected ? 'HC-05 Paired' : 'BT Standby'}
+              {/* Hardware & Environment Status */}
+              <div className="flex flex-wrap items-center gap-2">
+                {isAndroidPlatform ? (
+                  <Badge variant="outline" className="px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1.5 bg-emerald-500/15 text-emerald-400 border-emerald-500/30">
+                    <CheckCircle size={12} className="text-emerald-400" />
+                    iQOO 15 NFC Ready
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1.5 bg-purple-500/15 text-purple-300 border-purple-500/30">
+                    <Radio size={12} className="text-cyan-300" />
+                    Web Management
+                  </Badge>
+                )}
+                <Badge variant="outline" className="px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1.5 bg-white/5 text-muted-foreground border-white/10">
+                  <CreditCard size={12} className="text-cyan-400" />
+                  Primary: 97:B4:E9:00
                 </Badge>
               </div>
             </div>
@@ -435,7 +782,7 @@ export default function BankShield() {
               {/* Protection Status */}
               <div className="glass-card p-5 rounded-2xl border-white/10 hover:border-purple-500/30 transition-all flex flex-col justify-between">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Protection Status</span>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">App Lock Status</span>
                   <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                     <ShieldCheck size={18} />
                   </div>
@@ -445,7 +792,7 @@ export default function BankShield() {
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
                     Armed & Active
                   </div>
-                  <p className="text-[11px] text-muted-foreground mt-1">Hardware lock active on banking launch</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">Locks target apps until card tap</p>
                 </div>
               </div>
 
@@ -459,25 +806,27 @@ export default function BankShield() {
                 </div>
                 <div>
                   <div className="text-2xl font-bold text-white">
-                    {bankingApps.filter(a => a.enabled).length} / {bankingApps.length}
+                    {isAndroidPlatform && installedApps.length > 0 
+                      ? `${installedApps.filter(a => a.isProtected).length} / ${installedApps.length}` 
+                      : `${bankingApps.filter(a => a.enabled).length} Active`}
                   </div>
-                  <p className="text-[11px] text-muted-foreground mt-1">UPI & NetBanking apps guarded</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">Applications guarded with NFC lock</p>
                 </div>
               </div>
 
-              {/* Authorized RFID Cards */}
+              {/* Authorized NFC Cards */}
               <div className="glass-card p-5 rounded-2xl border-white/10 hover:border-purple-500/30 transition-all flex flex-col justify-between">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Authorized Keys</span>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Authorized Cards</span>
                   <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
                     <CreditCard size={18} />
                   </div>
                 </div>
                 <div>
                   <div className="text-2xl font-bold text-purple-300">
-                    {rfidCards.filter(c => c.status === 'active').length} Active
+                    2 Card Slots
                   </div>
-                  <p className="text-[11px] text-muted-foreground mt-1">Physical RC522 RFID Cards enrolled</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">🔵 Blue Fob & ⚪ White Card</p>
                 </div>
               </div>
 
@@ -494,7 +843,7 @@ export default function BankShield() {
                     {isSessionActive ? formatTimer(timeLeft) : 'Standby'}
                   </div>
                   <p className="text-[11px] text-muted-foreground mt-1">
-                    {isSessionActive ? `${activeSessionBank} Unlocked` : 'Locked until RFID tap'}
+                    {isSessionActive ? `${activeSessionBank} Unlocked` : 'Locked until NFC tap'}
                   </p>
                 </div>
               </div>
@@ -505,68 +854,102 @@ export default function BankShield() {
             <div className="space-y-4">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <Zap size={16} className="text-primary" />
-                Security Management & Controls
+                Hardware NFC & App Lock Controls
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 
-                {/* 1. Register Banking Apps */}
+                {/* 1. NFC Card Tester (FEATURED) */}
                 <div 
-                  onClick={() => setActiveView('register-apps')}
+                  onClick={() => { setActiveView('nfc-tester'); startNfcTester(); }}
+                  className="glass-card p-5 rounded-2xl cursor-pointer hover:border-cyan-400/60 hover:scale-[1.02] transition-all group border-cyan-500/30 bg-gradient-to-br from-cyan-950/20 to-purple-950/20 flex items-start gap-4 shadow-lg shadow-cyan-950/30"
+                >
+                  <div className="p-3 rounded-xl bg-cyan-500/20 text-cyan-300 group-hover:bg-cyan-500 group-hover:text-black transition-all">
+                    <Radio size={22} className="animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-sm text-white mb-1">NFC Card Tester</h4>
+                      <Badge className="bg-cyan-500/20 text-cyan-300 border-cyan-500/30 text-[9px] py-0">Phone NFC</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Tap physical Blue/White card on your phone to test real UID reading.</p>
+                  </div>
+                </div>
+
+                {/* 2. IoT Hardware Check (Arduino UNO + RC522) */}
+                <div 
+                  onClick={() => setActiveView('iot-hardware-check')}
+                  className="glass-card p-5 rounded-2xl cursor-pointer hover:border-emerald-400/60 hover:scale-[1.02] transition-all group border-emerald-500/30 bg-gradient-to-br from-emerald-950/20 to-teal-950/20 flex items-start gap-4 shadow-lg shadow-emerald-950/30"
+                >
+                  <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-300 group-hover:bg-emerald-500 group-hover:text-black transition-all">
+                    <Cpu size={22} className="animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-sm text-white mb-1">IoT Hardware Check</h4>
+                      <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-[9px] py-0">Laptop / Web</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Connect Arduino UNO + RC522 via USB to tap and verify RFID card.</p>
+                  </div>
+                </div>
+
+                {/* 3. Authorized NFC Cards */}
+                <div 
+                  onClick={() => setActiveView('authorized-cards')}
                   className="glass-card p-5 rounded-2xl cursor-pointer hover:border-purple-500/40 hover:scale-[1.02] transition-all group border-white/10 flex items-start gap-4"
                 >
                   <div className="p-3 rounded-xl bg-purple-600/20 text-purple-400 group-hover:bg-purple-600 group-hover:text-white transition-all">
-                    <Smartphone size={22} />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-sm text-white mb-1">Register Banking Apps</h4>
-                    <p className="text-xs text-muted-foreground">Configure PhonePe, GPay, Paytm, and netbanking app locks.</p>
-                  </div>
-                </div>
-
-                {/* 2. Register RFID Card */}
-                <div 
-                  onClick={() => setActiveView('register-rfid')}
-                  className="glass-card p-5 rounded-2xl cursor-pointer hover:border-cyan-500/40 hover:scale-[1.02] transition-all group border-white/10 flex items-start gap-4"
-                >
-                  <div className="p-3 rounded-xl bg-cyan-600/20 text-cyan-400 group-hover:bg-cyan-600 group-hover:text-white transition-all">
                     <CreditCard size={22} />
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-white mb-1">Register RFID Card</h4>
-                    <p className="text-xs text-muted-foreground">Enroll new RC522 physical cards with live UID reader.</p>
+                    <h4 className="font-bold text-sm text-white mb-1">Authorized NFC Cards</h4>
+                    <p className="text-xs text-muted-foreground">Configure Blue Card (97:B4:E9:00) and White Card UIDs.</p>
                   </div>
                 </div>
 
-                {/* 3. Connect Hardware */}
+                {/* 3. Protected Applications */}
                 <div 
-                  onClick={() => setActiveView('connect-hardware')}
+                  onClick={() => setActiveView('register-apps')}
+                  className="glass-card p-5 rounded-2xl cursor-pointer hover:border-primary/50 hover:scale-[1.02] transition-all group border-white/10 flex items-start gap-4"
+                >
+                  <div className="p-3 rounded-xl bg-blue-600/20 text-blue-400 group-hover:bg-blue-600 group-hover:text-white transition-all">
+                    <Smartphone size={22} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-white mb-1">Protected Applications</h4>
+                    <p className="text-xs text-muted-foreground">Select WhatsApp, GPay, Banking apps to lock with NFC.</p>
+                  </div>
+                </div>
+
+                {/* 4. App-Lock Permissions Setup */}
+                <div 
+                  onClick={() => setActiveView('permissions-guide')}
                   className="glass-card p-5 rounded-2xl cursor-pointer hover:border-emerald-500/40 hover:scale-[1.02] transition-all group border-white/10 flex items-start gap-4"
                 >
                   <div className="p-3 rounded-xl bg-emerald-600/20 text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white transition-all">
-                    <Cpu size={22} />
+                    <Layers size={22} />
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-white mb-1">Connect Hardware</h4>
-                    <p className="text-xs text-muted-foreground">Pair Arduino UNO via USB Serial or HC-05 Bluetooth.</p>
+                    <h4 className="font-bold text-sm text-white mb-1">App Lock Permissions</h4>
+                    <p className="text-xs text-muted-foreground">Enable Accessibility Service & Display Over Other Apps.</p>
                   </div>
                 </div>
 
-                {/* 4. Activate Banking Mode (Demo) */}
+                {/* 5. Simulate Banking Launch */}
                 <div 
-                  onClick={() => startVerification('PhonePe UPI')}
-                  className="glass-card p-5 rounded-2xl cursor-pointer hover:border-primary/60 hover:scale-[1.02] transition-all group border-purple-500/30 bg-gradient-to-br from-purple-900/30 via-background to-blue-900/20 flex items-start gap-4 shadow-lg shadow-purple-600/10"
+                  onClick={() => startVerification('WhatsApp')}
+                  className="glass-card p-5 rounded-2xl cursor-pointer hover:border-purple-500/40 hover:scale-[1.02] transition-all group border-white/10 flex items-start gap-4"
                 >
-                  <div className="p-3 rounded-xl bg-primary text-white shadow-[0_0_15px_rgba(139,92,246,0.6)]">
+                  <div className="p-3 rounded-xl bg-purple-600/20 text-purple-300 group-hover:bg-purple-600 group-hover:text-white transition-all">
                     <Lock size={22} />
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-white mb-1">Simulate Banking Launch</h4>
-                    <p className="text-xs text-muted-foreground">Test RFID authorization overlay on protected banking app.</p>
+                    <h4 className="font-bold text-sm text-white mb-1">Simulate Lock Overlay</h4>
+                    <p className="text-xs text-muted-foreground">Test the NFC unlock screen overlay as seen on app launch.</p>
                   </div>
                 </div>
 
-                {/* 5. Session History */}
+                {/* 6. Session History */}
                 <div 
                   onClick={() => setActiveView('history')}
                   className="glass-card p-5 rounded-2xl cursor-pointer hover:border-white/30 hover:scale-[1.02] transition-all group border-white/10 flex items-start gap-4"
@@ -576,21 +959,7 @@ export default function BankShield() {
                   </div>
                   <div>
                     <h4 className="font-bold text-sm text-white mb-1">Session History</h4>
-                    <p className="text-xs text-muted-foreground">View immutable timeline of RFID-authenticated sessions.</p>
-                  </div>
-                </div>
-
-                {/* 6. Hardware & Android Architecture Guide */}
-                <div 
-                  onClick={() => setActiveView('hardware-guide')}
-                  className="glass-card p-5 rounded-2xl cursor-pointer hover:border-amber-500/40 hover:scale-[1.02] transition-all group border-white/10 flex items-start gap-4"
-                >
-                  <div className="p-3 rounded-xl bg-amber-500/20 text-amber-300 group-hover:bg-amber-500 group-hover:text-black transition-all">
-                    <Code2 size={22} />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-sm text-white mb-1">Hardware Guide & Code</h4>
-                    <p className="text-xs text-muted-foreground">Wiring pinouts, Arduino .ino sketch, and Android lock guide.</p>
+                    <p className="text-xs text-muted-foreground">View immutable timeline of authorized card unlock events.</p>
                   </div>
                 </div>
 
@@ -624,9 +993,230 @@ export default function BankShield() {
         )}
 
         {/* ========================================================= */}
-        {/* VIEW 2: REGISTER RFID CARD                                */}
+        {/* VIEW 2: NFC CARD TESTER (USER SPECIFICATION)              */}
         {/* ========================================================= */}
-        {activeView === 'register-rfid' && (
+        {activeView === 'nfc-tester' && (
+          <div className="space-y-6 animate-fade-in">
+            <Button 
+              variant="ghost" 
+              onClick={() => { stopNfcTester(); setActiveView('dashboard'); }} 
+              className="gap-2 text-muted-foreground hover:text-white -ml-2"
+            >
+              <ChevronLeft size={16} /> Back to Dashboard
+            </Button>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                  <Radio className="text-cyan-400" />
+                  NFC Card Tester
+                </h2>
+                <p className="text-xs text-muted-foreground">Verify that your physical cards are detected by your phone's NFC hardware.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={resetNfcTester} 
+                  className="border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10 gap-1.5 text-xs rounded-xl"
+                >
+                  <RefreshCw size={13} /> Reset / Rescan
+                </Button>
+              </div>
+            </div>
+
+            {/* Main NFC Hardware Tester Console */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* Left Column: Diagnostics */}
+              <div className="space-y-4">
+                <div className="glass-card p-5 rounded-2xl border-white/10 space-y-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Hardware Diagnostics</h4>
+                  
+                  <div className="flex items-center justify-between p-3 bg-black/40 rounded-xl border border-white/10">
+                    <span className="text-xs text-white">NFC Status</span>
+                    {isAndroidPlatform ? (
+                      <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-xs">
+                        ✓ NFC Available & Active
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="bg-amber-500/15 text-amber-300 border-amber-500/30 text-xs">
+                        Web Mode (Simulated / Diagnostic)
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 bg-black/40 rounded-xl border border-white/10">
+                    <span className="text-xs text-white">Reader Mode</span>
+                    <span className="text-xs font-mono text-cyan-300">
+                      {testerStatus === 'waiting' ? 'Polling (ISO 14443-3A)' : testerStatus === 'detected' ? 'Card Read Complete' : 'Standby'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 bg-black/40 rounded-xl border border-white/10">
+                    <span className="text-xs text-white">Target Device</span>
+                    <span className="text-xs font-mono text-slate-300">iQOO 15 (vivo I2501)</span>
+                  </div>
+                </div>
+
+                {/* Browser Limitation Notice as Requested in Spec */}
+                {!isAndroidPlatform && (
+                  <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                      <AlertTriangle size={15} />
+                      Browser Hardware Notice
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      The W3C Web NFC standard in mobile browsers (Chrome) strictly withholds raw ISO 14443-3A tag UIDs for privacy. To run real physical NFC hardware reader mode, open the <strong>Defenxia Android App</strong>.
+                    </p>
+                    <div className="pt-2 flex gap-2">
+                      <Button 
+                        size="sm" 
+                        onClick={() => {
+                          setDetectedCard({
+                            uid: '97:B4:E9:00',
+                            technologies: ['NfcA', 'MifareClassic'],
+                            authorized: true,
+                            cardName: 'Blue Security KeyFob'
+                          });
+                          setTesterStatus('detected');
+                        }}
+                        className="w-full bg-cyan-600/20 hover:bg-cyan-600 text-cyan-300 hover:text-black border border-cyan-500/30 text-[11px] rounded-lg h-7"
+                      >
+                        Simulate Blue Card (97:B4:E9:00)
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Center & Right Column: Interactive Card Reading Panel */}
+              <div className="lg:col-span-2 glass-card p-8 rounded-2xl border-white/10 flex flex-col items-center justify-center text-center relative overflow-hidden">
+                
+                {/* Visual Target Ring */}
+                <div className="relative w-48 h-48 mb-6 flex items-center justify-center">
+                  {testerStatus === 'waiting' && (
+                    <>
+                      <div className="absolute inset-0 rounded-full border-2 border-cyan-400/40 animate-ping opacity-60" />
+                      <div className="absolute inset-4 rounded-full border border-purple-500/40 animate-pulse" />
+                      <div className="w-32 h-32 rounded-full bg-cyan-500/10 border border-cyan-400/40 flex items-center justify-center shadow-[0_0_35px_rgba(6,182,212,0.35)]">
+                        <Radio size={52} className="text-cyan-300 animate-pulse" />
+                      </div>
+                    </>
+                  )}
+
+                  {testerStatus === 'detected' && detectedCard && (
+                    <div className={`w-32 h-32 rounded-full border flex items-center justify-center animate-in zoom-in-75 ${
+                      detectedCard.authorized 
+                        ? 'bg-emerald-500/20 border-emerald-500 shadow-[0_0_40px_rgba(16,185,129,0.5)]' 
+                        : 'bg-red-500/20 border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.5)]'
+                    }`}>
+                      {detectedCard.authorized ? (
+                        <CheckCircle2 size={56} className="text-emerald-400" />
+                      ) : (
+                        <XCircle size={56} className="text-red-400" />
+                      )}
+                    </div>
+                  )}
+
+                  {testerStatus === 'idle' && (
+                    <div className="w-32 h-32 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+                      <CreditCard size={52} className="text-muted-foreground" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Instructions / Status */}
+                {testerStatus === 'waiting' && (
+                  <div className="space-y-2">
+                    <h3 className="text-xl font-bold text-white">Place your NFC card against the back of the phone</h3>
+                    <p className="text-xs text-muted-foreground max-w-md">
+                      Hold your physical Blue or White card against the upper camera area of your iQOO 15 to capture its UID.
+                    </p>
+                    <div className="pt-3">
+                      <Badge variant="outline" className="bg-cyan-500/15 text-cyan-300 border-cyan-500/30 text-xs px-3 py-1">
+                        [ Waiting for NFC Card ]
+                      </Badge>
+                    </div>
+                  </div>
+                )}
+
+                {testerStatus === 'detected' && detectedCard && (
+                  <div className="space-y-4 w-full max-w-md">
+                    <div className="space-y-1">
+                      <h3 className="text-xl font-bold text-white flex items-center justify-center gap-2">
+                        Card Detected!
+                      </h3>
+                      <p className="text-xs text-muted-foreground">Physical NFC tag successfully captured</p>
+                    </div>
+
+                    {/* Result Matrix Card */}
+                    <div className="bg-black/60 border border-white/15 rounded-2xl p-5 text-left space-y-3 font-mono">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                        <span className="text-xs text-muted-foreground">UID (Hardware)</span>
+                        <span className="text-sm font-bold text-cyan-300">{detectedCard.uid}</span>
+                      </div>
+
+                      <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                        <span className="text-xs text-muted-foreground">Technology</span>
+                        <span className="text-xs text-purple-300">{detectedCard.technologies.join(', ') || 'NfcA (ISO 14443-3A)'}</span>
+                      </div>
+
+                      <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                        <span className="text-xs text-muted-foreground">Credential Type</span>
+                        <span className="text-xs text-white">{detectedCard.cardName}</span>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-xs text-muted-foreground">Status</span>
+                        {detectedCard.authorized ? (
+                          <Badge className="bg-emerald-500 text-black font-bold text-xs">
+                            ✓ AUTHORIZED
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-red-500 text-white font-bold text-xs">
+                            ✗ UNAUTHORIZED
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-emerald-400 text-xs flex items-center justify-center gap-1.5 font-medium">
+                      <CheckCircle2 size={14} /> NFC communication successful
+                    </div>
+
+                    <div className="pt-2 flex gap-3">
+                      <Button onClick={resetNfcTester} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs rounded-xl">
+                        Scan Another Card
+                      </Button>
+                      <Button variant="outline" onClick={() => setActiveView('authorized-cards')} className="border-white/15 text-xs rounded-xl">
+                        Manage Cards
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {testerStatus === 'idle' && (
+                  <div className="space-y-4">
+                    <h3 className="text-xl font-bold text-white">NFC Card Tester Ready</h3>
+                    <p className="text-xs text-muted-foreground max-w-md">
+                      Click Start Scan and place your Blue card or White card near your phone's NFC reader.
+                    </p>
+                    <Button onClick={startNfcTester} className="bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-bold text-xs px-6 py-5 rounded-xl">
+                      Start NFC Scan
+                    </Button>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* VIEW 3: AUTHORIZED NFC CARDS (USER SPECIFICATION)         */}
+        {/* ========================================================= */}
+        {activeView === 'authorized-cards' && (
           <div className="space-y-6 animate-fade-in">
             <Button 
               variant="ghost" 
@@ -636,133 +1226,161 @@ export default function BankShield() {
               <ChevronLeft size={16} /> Back to Dashboard
             </Button>
 
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                  <CreditCard className="text-cyan-400" />
-                  Enroll RFID Security KeyCards
+                  <CreditCard className="text-purple-400" />
+                  Authorized NFC Cards
                 </h2>
-                <p className="text-xs text-muted-foreground">Tap any physical RC522 card or input UID manually to authorize.</p>
+                <p className="text-xs text-muted-foreground">Only these physical cards can unlock protected applications.</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* 2 Card Slots Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               
-              {/* Card Enrollment Reader Wizard */}
-              <div className="glass-card p-6 rounded-2xl border-white/10 flex flex-col items-center justify-center text-center">
-                <div className="relative w-36 h-36 mb-6 flex items-center justify-center">
-                  <div className="absolute inset-0 rounded-full border-2 border-cyan-400/40 animate-ping opacity-75" />
-                  <div className="absolute inset-2 rounded-full border border-purple-500/50 animate-pulse" />
-                  <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-cyan-500/20 to-purple-600/30 border border-cyan-400/50 flex items-center justify-center shadow-[0_0_30px_rgba(0,229,255,0.4)]">
-                    <Radio size={40} className="text-cyan-300 animate-pulse" />
+              {/* Slot 1: Blue Card */}
+              <div className="glass-card p-6 rounded-2xl border-white/10 hover:border-blue-500/40 transition-all space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-600/30 border border-blue-500/40 flex items-center justify-center text-blue-400">
+                      <Radio size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-base text-white">🔵 Blue Card</h4>
+                      <p className="text-xs text-muted-foreground">Primary Security KeyFob</p>
+                    </div>
+                  </div>
+                  <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-xs">
+                    Registered
+                  </Badge>
+                </div>
+
+                <div className="p-4 bg-black/40 rounded-xl border border-white/10 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Card UID</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-cyan-300 font-bold">
+                        {showBlueUid ? blueCardUid : '97:B4:**:**'}
+                      </span>
+                      <Button 
+                        size="icon" 
+                        variant="ghost" 
+                        onClick={() => setShowBlueUid(!showBlueUid)} 
+                        className="h-6 w-6 text-muted-foreground hover:text-white"
+                      >
+                        <Eye size={13} />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Tag Technology</span>
+                    <span className="text-white font-mono">MIFARE 1K (NfcA)</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Access Privilege</span>
+                    <span className="text-emerald-400 font-bold">Full Unlock</span>
                   </div>
                 </div>
 
-                <h3 className="text-lg font-bold text-white mb-1">
-                  {newCardUid ? `Card Detected: ${newCardUid}` : 'Ready to Read RFID Card'}
-                </h3>
-                <p className="text-xs text-muted-foreground mb-6 max-w-xs">
-                  Tap your RFID card on the RC522 reader connected via USB or Bluetooth.
-                </p>
-
-                {/* Form to Save Card */}
-                <form onSubmit={handleSaveCard} className="w-full space-y-3.5 text-left">
-                  <div>
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
-                      Scanned Card UID (HEX)
-                    </label>
-                    <Input 
-                      value={newCardUid}
-                      onChange={(e) => setNewCardUid(e.target.value.toUpperCase())}
-                      placeholder="e.g. A1B2C3D4 or DEMO_CARD_002"
-                      className="bg-black/50 border-white/15 text-white font-mono text-sm uppercase py-5 rounded-xl"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
-                      Cardholder / Account Name
-                    </label>
-                    <Input 
-                      value={newCardOwner}
-                      onChange={(e) => setNewCardOwner(e.target.value)}
-                      placeholder="e.g. Syed Subhan (Primary UPI Card)"
-                      className="bg-black/50 border-white/15 text-white text-sm py-5 rounded-xl"
-                      required
-                    />
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
-                    <Button 
-                      type="button" 
-                      variant="outline" 
-                      onClick={() => setNewCardUid(`KEY_${Math.random().toString(16).substring(2, 10).toUpperCase()}`)}
-                      className="border-white/15 text-xs rounded-xl"
-                    >
-                      Simulate Tap
-                    </Button>
-                    <Button 
-                      type="submit" 
-                      disabled={isRegisteringCard}
-                      className="flex-1 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-semibold rounded-xl text-xs"
-                    >
-                      {isRegisteringCard ? <Loader2 size={16} className="animate-spin" /> : 'Save & Authorize Card'}
-                    </Button>
-                  </div>
-                </form>
+                <Button 
+                  variant="outline" 
+                  onClick={() => { setEditingCardSlot('blue'); setCardEditInput(blueCardUid); }}
+                  className="w-full border-white/15 text-xs rounded-xl"
+                >
+                  Edit / Re-register Blue Card UID
+                </Button>
               </div>
 
-              {/* List of Authorized Cards */}
-              <div className="glass-card p-6 rounded-2xl border-white/10 flex flex-col">
-                <h3 className="text-base font-bold text-white mb-4 flex items-center justify-between">
-                  <span>Authorized Cards ({rfidCards.length})</span>
-                  <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-xs">
-                    Protected List
+              {/* Slot 2: White Card */}
+              <div className="glass-card p-6 rounded-2xl border-white/10 hover:border-slate-300/40 transition-all space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-200/20 border border-slate-300/40 flex items-center justify-center text-slate-200">
+                      <CreditCard size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-base text-white">⚪ White Card</h4>
+                      <p className="text-xs text-muted-foreground">Secondary Backup Card</p>
+                    </div>
+                  </div>
+                  <Badge className={whiteCardUid ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-xs' : 'bg-amber-500/20 text-amber-300 border-amber-500/30 text-xs'}>
+                    {whiteCardUid ? 'Registered' : 'Waiting for UID'}
                   </Badge>
-                </h3>
+                </div>
 
-                <div className="space-y-3 overflow-y-auto max-h-[380px] pr-1 flex-1">
-                  {rfidCards.map((card) => (
-                    <div 
-                      key={card.id} 
-                      className="p-4 rounded-xl bg-black/40 border border-white/10 flex items-center justify-between hover:border-purple-500/30 transition-all"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="p-2.5 rounded-xl bg-purple-600/20 text-cyan-300 border border-purple-500/30">
-                          <CreditCard size={18} />
-                        </div>
-                        <div>
-                          <h4 className="font-bold text-xs text-white leading-snug">{card.owner_name}</h4>
-                          <p className="text-[11px] font-mono text-cyan-400 mt-0.5">UID: {card.uid}</p>
-                          <span className="text-[10px] text-muted-foreground">Added {formatSafeDate(card.created_at)}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
-                          Active
-                        </Badge>
+                <div className="p-4 bg-black/40 rounded-xl border border-white/10 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Card UID</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-cyan-300 font-bold">
+                        {whiteCardUid ? (showWhiteUid ? whiteCardUid : 'A1:B2:**:**') : 'Not Configured'}
+                      </span>
+                      {whiteCardUid && (
                         <Button 
                           size="icon" 
                           variant="ghost" 
-                          onClick={() => handleDeleteCard(card.uid)}
-                          className="h-8 w-8 text-muted-foreground hover:text-red-400 hover:bg-red-500/10 rounded-lg"
+                          onClick={() => setShowWhiteUid(!showWhiteUid)} 
+                          className="h-6 w-6 text-muted-foreground hover:text-white"
                         >
-                          <Trash2 size={14} />
+                          <Eye size={13} />
                         </Button>
-                      </div>
+                      )}
                     </div>
-                  ))}
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Tag Technology</span>
+                    <span className="text-white font-mono">ISO 14443-3A</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Access Privilege</span>
+                    <span className="text-emerald-400 font-bold">Full Unlock</span>
+                  </div>
                 </div>
+
+                <Button 
+                  variant="outline" 
+                  onClick={() => { setEditingCardSlot('white'); setCardEditInput(whiteCardUid || ''); }}
+                  className="w-full border-white/15 text-xs rounded-xl"
+                >
+                  {whiteCardUid ? 'Edit / Update White Card UID' : 'Register White Card'}
+                </Button>
               </div>
 
             </div>
+
+            {/* Modal / Dialog for UID edit */}
+            {editingCardSlot && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+                <div className="bg-slate-950 border border-purple-500/40 rounded-2xl p-6 w-full max-w-sm space-y-4">
+                  <h3 className="text-base font-bold text-white">
+                    Update {editingCardSlot === 'blue' ? 'Blue' : 'White'} Card UID
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Enter the hexadecimal UID (e.g. 97:B4:E9:00 or scan with the tester).
+                  </p>
+                  <Input 
+                    value={cardEditInput}
+                    onChange={(e) => setCardEditInput(e.target.value.toUpperCase())}
+                    placeholder="e.g. 97:B4:E9:00"
+                    className="bg-black/50 border-white/20 text-white font-mono uppercase"
+                  />
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setEditingCardSlot(null)} className="flex-1 text-xs">
+                      Cancel
+                    </Button>
+                    <Button onClick={handleSaveCardSlot} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white text-xs">
+                      Save UID
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* ========================================================= */}
-        {/* VIEW 3: REGISTER BANKING APPS                             */}
+        {/* VIEW 4: PROTECTED APPLICATIONS (USER SPECIFICATION)       */}
         {/* ========================================================= */}
         {activeView === 'register-apps' && (
           <div className="space-y-6 animate-fade-in">
@@ -778,53 +1396,139 @@ export default function BankShield() {
               <div>
                 <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                   <Smartphone className="text-primary" />
-                  Protected Banking Apps Configuration
+                  Protected Applications
                 </h2>
-                <p className="text-xs text-muted-foreground">DEFENXIA requires hardware RFID verification before opening protected apps.</p>
+                <p className="text-xs text-muted-foreground">
+                  {isAndroidPlatform 
+                    ? 'Select installed applications to lock with your authorized NFC card.' 
+                    : 'Configure banking & sensitive applications to lock with NFC card authentication.'}
+                </p>
               </div>
-              <Badge variant="outline" className="bg-primary/10 text-purple-300 border-primary/30 text-xs px-3 py-1 self-start sm:self-auto">
-                {bankingApps.filter(a => a.enabled).length} Protected Apps
-              </Badge>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {bankingApps.map((app) => (
-                <div 
-                  key={app.id} 
-                  className={`glass-card p-4 sm:p-5 rounded-2xl border transition-all flex items-center justify-between ${app.enabled ? 'border-purple-500/40 bg-purple-950/20 shadow-lg shadow-purple-950/30' : 'border-white/10 bg-black/20'}`}
+              <div className="flex items-center gap-2">
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={() => loadNativeInstalledApps(true)} 
+                  className="border-white/15 text-xs text-muted-foreground hover:text-white rounded-xl flex items-center gap-1.5"
+                  disabled={loadingInstalledApps}
                 >
-                  <div className="flex items-center gap-3.5">
-                    <div className={`w-12 h-12 rounded-2xl ${app.iconBg} text-white font-bold flex items-center justify-center shadow-md text-sm shrink-0`}>
-                      {app.name.substring(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-sm text-white">{app.name}</h4>
-                        {app.enabled && (
-                          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px] py-0">
-                            Guarded
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-[11px] font-mono text-muted-foreground mt-0.5">{app.package}</p>
-                    </div>
-                  </div>
-
-                  <Switch 
-                    checked={app.enabled} 
-                    onCheckedChange={() => handleToggleApp(app.id)}
-                    className="data-[state=checked]:bg-purple-600"
-                  />
-                </div>
-              ))}
+                  <RefreshCw size={12} className={loadingInstalledApps ? "animate-spin" : ""} />
+                  Refresh
+                </Button>
+                <Badge variant="outline" className="bg-primary/10 text-purple-300 border-primary/30 text-xs px-3 py-1">
+                  {isAndroidPlatform 
+                    ? `${installedApps.filter(a => a.isProtected).length} Protected` 
+                    : `${bankingApps.filter(a => a.enabled).length} Protected`}
+                </Badge>
+              </div>
             </div>
+
+            {/* If on Android */}
+            {isAndroidPlatform ? (
+              loadingInstalledApps && installedApps.length === 0 ? (
+                <div className="glass-card p-12 rounded-2xl border-white/10 text-center space-y-4 flex flex-col items-center justify-center">
+                  <Loader2 size={44} className="text-primary animate-spin" />
+                  <div>
+                    <h4 className="font-bold text-base text-white">Loading installed applications...</h4>
+                    <p className="text-xs text-muted-foreground mt-1">Reading registered packages from your phone's system</p>
+                  </div>
+                </div>
+              ) : installedApps.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[580px] overflow-y-auto pr-1">
+                  {installedApps.map((app) => (
+                    <div 
+                      key={app.packageName}
+                      className={`glass-card p-4 sm:p-5 rounded-2xl border transition-all flex items-center justify-between ${
+                        app.isProtected ? 'border-purple-500/40 bg-purple-950/20 shadow-lg shadow-purple-950/30' : 'border-white/10 bg-black/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        {app.icon ? (
+                          <img src={app.icon} alt={app.appName} className="w-11 h-11 rounded-2xl shrink-0 object-contain" />
+                        ) : (
+                          <div className="w-11 h-11 rounded-2xl bg-purple-600/30 border border-purple-500/40 text-white font-bold flex items-center justify-center shrink-0 text-sm">
+                            {app.appName.substring(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-sm text-white truncate">{app.appName}</h4>
+                            {app.isProtected && (
+                              <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px] py-0 shrink-0">
+                                Locked
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] font-mono text-muted-foreground truncate mt-0.5">{app.packageName}</p>
+                        </div>
+                      </div>
+
+                      <Switch 
+                        checked={app.isProtected} 
+                        onCheckedChange={() => handleToggleNativeApp(app.packageName)}
+                        className="data-[state=checked]:bg-purple-600 ml-3 shrink-0"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="glass-card p-8 rounded-2xl border-white/10 text-center space-y-3">
+                  <Smartphone size={40} className="text-muted-foreground mx-auto" />
+                  <h4 className="font-bold text-sm text-white">No applications detected</h4>
+                  <p className="text-xs text-muted-foreground">Tap refresh to query your device packages</p>
+                  <Button onClick={() => loadNativeInstalledApps(true)} className="text-xs bg-purple-600">
+                    Scan Applications
+                  </Button>
+                </div>
+              )
+            ) : (
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-cyan-300 flex items-center gap-2">
+                  <Sparkles size={16} className="shrink-0 text-cyan-400" />
+                  <span>Desktop Preview Mode: Showing demo applications. On your Android phone, Defenxia automatically loads your actual installed applications.</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {bankingApps.map((app) => (
+                    <div 
+                      key={app.id} 
+                      className={`glass-card p-4 sm:p-5 rounded-2xl border transition-all flex items-center justify-between ${
+                        app.enabled ? 'border-purple-500/40 bg-purple-950/20 shadow-lg shadow-purple-950/30' : 'border-white/10 bg-black/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3.5">
+                        <div className={`w-12 h-12 rounded-2xl ${app.iconBg} text-white font-bold flex items-center justify-center shadow-md text-sm shrink-0`}>
+                          {app.name.substring(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-sm text-white">{app.name}</h4>
+                            {app.enabled && (
+                              <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px] py-0">
+                                Guarded
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] font-mono text-muted-foreground mt-0.5">{app.package}</p>
+                        </div>
+                      </div>
+
+                      <Switch 
+                        checked={app.enabled} 
+                        onCheckedChange={() => handleToggleApp(app.id)}
+                        className="data-[state=checked]:bg-purple-600"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* ========================================================= */}
-        {/* VIEW 4: CONNECT HARDWARE                                  */}
+        {/* VIEW 5: APP LOCK PERMISSIONS SETUP (GUIDE)                */}
         {/* ========================================================= */}
-        {activeView === 'connect-hardware' && (
+        {activeView === 'permissions-guide' && (
           <div className="space-y-6 animate-fade-in">
             <Button 
               variant="ghost" 
@@ -834,180 +1538,519 @@ export default function BankShield() {
               <ChevronLeft size={16} /> Back to Dashboard
             </Button>
 
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                  <Cpu className="text-cyan-400" />
-                  Hardware Bridge & Connection
+                  <Layers className="text-emerald-400" />
+                  App Lock System Permissions
                 </h2>
-                <p className="text-xs text-muted-foreground">Select communication mode: USB Serial for Laptop evaluator or Bluetooth for Mobile.</p>
+                <p className="text-xs text-muted-foreground">
+                  Status automatically updates in real-time when returning from Android Settings.
+                </p>
+              </div>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                onClick={async () => {
+                  const p = await nativeNfcService.checkPermissions();
+                  setPermissionStatus(p);
+                  const n = await nativeNfcService.getNfcStatus();
+                  setNfcState(n);
+                  toast.success("Permission states refreshed");
+                }}
+                className="border-white/15 text-xs text-muted-foreground hover:text-white rounded-xl"
+              >
+                <RefreshCw size={12} className="mr-1.5" /> Check Status
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* Permission 1: Accessibility Service */}
+              <div className={`glass-card p-6 rounded-2xl border space-y-4 ${
+                permissionStatus.accessibilityGranted ? 'border-emerald-500/40 bg-emerald-950/10' : 'border-white/10'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-3 rounded-xl ${permissionStatus.accessibilityGranted ? 'bg-emerald-500/20 text-emerald-400' : 'bg-purple-600/20 text-purple-400'}`}>
+                      <Shield size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-white">Accessibility Service</h4>
+                      <p className="text-xs text-muted-foreground">Monitors protected app launches</p>
+                    </div>
+                  </div>
+                  <Badge variant="outline" className={permissionStatus.accessibilityGranted ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border-amber-500/30'}>
+                    {permissionStatus.accessibilityGranted ? '✓ Granted' : '✕ Required'}
+                  </Badge>
+                </div>
+
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Allows Defenxia to detect when a protected app is opened so the physical NFC lock screen can block unauthorized access immediately.
+                </p>
+
+                {permissionStatus.accessibilityGranted ? (
+                  <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium py-2">
+                    <CheckCircle2 size={15} /> Active and intercepting protected apps
+                  </div>
+                ) : (
+                  <Button 
+                    onClick={() => nativeNfcService.openAccessibilitySettings()} 
+                    className="w-full bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-xl font-semibold"
+                  >
+                    Enable Accessibility Service
+                  </Button>
+                )}
+              </div>
+
+              {/* Permission 2: Display Over Other Apps */}
+              <div className={`glass-card p-6 rounded-2xl border space-y-4 ${
+                permissionStatus.overlayGranted ? 'border-emerald-500/40 bg-emerald-950/10' : 'border-white/10'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-3 rounded-xl ${permissionStatus.overlayGranted ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-600/20 text-cyan-300'}`}>
+                      <Layers size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-white">Display Over Other Apps</h4>
+                      <p className="text-xs text-muted-foreground">Renders the NFC lock screen</p>
+                    </div>
+                  </div>
+                  <Badge variant="outline" className={permissionStatus.overlayGranted ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border-amber-500/30'}>
+                    {permissionStatus.overlayGranted ? '✓ Granted' : '✕ Required'}
+                  </Badge>
+                </div>
+
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Required on Android 14/15, OnePlus, and iQOO to display the Defenxia NFC lock screen directly over protected apps before they open.
+                </p>
+
+                {permissionStatus.overlayGranted ? (
+                  <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium py-2">
+                    <CheckCircle2 size={15} /> Overlay capability active
+                  </div>
+                ) : (
+                  <Button 
+                    onClick={() => nativeNfcService.openOverlaySettings()} 
+                    className="w-full bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs rounded-xl"
+                  >
+                    Enable Overlay Permission
+                  </Button>
+                )}
+              </div>
+
+              {/* Permission 3: Background Battery Optimization Whitelist */}
+              <div className="glass-card p-6 rounded-2xl border-white/10 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-amber-600/20 text-amber-400 rounded-xl">
+                      <Zap size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-white">Background Execution</h4>
+                      <p className="text-xs text-muted-foreground">Prevents OEM battery killers</p>
+                    </div>
+                  </div>
+                  <Badge variant="outline" className={permissionStatus.batteryOptimizationIgnored ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-blue-500/20 text-blue-300 border-blue-500/30'}>
+                    {permissionStatus.batteryOptimizationIgnored ? '✓ Unrestricted' : 'Recommended'}
+                  </Badge>
+                </div>
+
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  On OnePlus (OxygenOS) and iQOO (Funtouch OS), aggressive battery savers can stop accessibility services. Set Defenxia to "Don't optimize / Unrestricted".
+                </p>
+
+                <Button 
+                  variant="outline"
+                  onClick={() => nativeNfcService.openBatteryOptimizationSettings()} 
+                  className="w-full border-white/15 text-xs text-white rounded-xl"
+                >
+                  Configure Battery Unrestricted
+                </Button>
+              </div>
+
+              {/* Permission 4: Physical NFC Hardware */}
+              <div className="glass-card p-6 rounded-2xl border-white/10 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-3 rounded-xl ${nfcState.enabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}`}>
+                      <Radio size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-white">NFC Hardware</h4>
+                      <p className="text-xs text-muted-foreground">Physical tag authentication</p>
+                    </div>
+                  </div>
+                  <Badge variant="outline" className={nfcState.enabled ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}>
+                    {nfcState.enabled ? '✓ Enabled' : (nfcState.available ? '⚠️ Disabled' : '✕ Not Available')}
+                  </Badge>
+                </div>
+
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {nfcState.enabled 
+                    ? 'NFC hardware is powered on and ready to detect Blue and White cards.' 
+                    : 'NFC is currently turned off in your phone settings. Turn NFC ON to scan cards.'}
+                </p>
+
+                {!nfcState.enabled && (
+                  <Button 
+                    onClick={() => nativeNfcService.openNfcSettings()} 
+                    className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs rounded-xl font-semibold"
+                  >
+                    Open NFC Settings
+                  </Button>
+                )}
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* VIEW: IOT HARDWARE CHECK (ARDUINO UNO + RC522)            */}
+        {/* ========================================================= */}
+        {activeView === 'iot-hardware-check' && (
+          <div className="space-y-6 animate-fade-in">
+            <Button 
+              variant="ghost" 
+              onClick={() => setActiveView('dashboard')} 
+              className="gap-2 text-muted-foreground hover:text-white -ml-2"
+            >
+              <ChevronLeft size={16} /> Back to Dashboard
+            </Button>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                  <Cpu className="text-emerald-400" />
+                  IoT Hardware Check (Arduino UNO + RC522)
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  USB Web Serial RFID verification for Laptop / Web browsers (Vercel & Localhost)
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {serial.isConnected ? (
+                  <Badge variant="outline" className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-xs px-3 py-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mr-1.5" />
+                    Arduino Connected
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-xs px-3 py-1">
+                    Serial Disconnected
+                  </Badge>
+                )}
               </div>
             </div>
 
-            <Tabs defaultValue="usb" onValueChange={(v) => setHardwareMode(v as any)} className="w-full">
-              <TabsList className="grid grid-cols-2 max-w-md bg-black/50 border border-white/10 p-1 rounded-xl mb-6">
-                <TabsTrigger value="usb" className="rounded-lg text-xs font-semibold data-[state=active]:bg-purple-600 data-[state=active]:text-white">
-                  <Usb size={14} className="mr-2" /> Mode 1: USB Serial (Laptop)
-                </TabsTrigger>
-                <TabsTrigger value="bluetooth" className="rounded-lg text-xs font-semibold data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                  <Bluetooth size={14} className="mr-2" /> Mode 2: Bluetooth (Mobile)
-                </TabsTrigger>
-              </TabsList>
-
-              {/* USB TAB */}
-              <TabsContent value="usb" className="space-y-6">
-                <div className="glass-card p-6 rounded-2xl border-white/10">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/10">
-                    <div>
-                      <h3 className="font-bold text-base text-white flex items-center gap-2">
-                        <Usb className="text-purple-400" />
-                        Arduino UNO Web Serial Connection (9600 Baud)
-                      </h3>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Connects directly to Arduino UNO via Web Serial API on Chrome/Edge.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {serial.isConnected ? (
-                        <Button onClick={() => serial.disconnect()} variant="outline" className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs rounded-xl">
-                          Disconnect USB
-                        </Button>
-                      ) : (
-                        <Button onClick={() => serial.connect()} className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-xl">
-                          Connect Arduino UNO
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 my-6">
-                    <div className="p-3.5 bg-black/40 rounded-xl border border-white/10">
-                      <span className="text-[10px] text-muted-foreground block mb-1">Connection State</span>
-                      <span className={`text-sm font-bold ${serial.isConnected ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                        {serial.isConnected ? '● Connected (Ready)' : '○ Disconnected'}
-                      </span>
-                    </div>
-                    <div className="p-3.5 bg-black/40 rounded-xl border border-white/10">
-                      <span className="text-[10px] text-muted-foreground block mb-1">Port Interface</span>
-                      <span className="text-xs font-mono text-white truncate block">
-                        {serial.portInfo || 'None'}
-                      </span>
-                    </div>
-                    <div className="p-3.5 bg-black/40 rounded-xl border border-white/10">
-                      <span className="text-[10px] text-muted-foreground block mb-1">Baud Rate</span>
-                      <span className="text-sm font-mono font-bold text-cyan-400">9600 bps</span>
-                    </div>
-                  </div>
-
-                  {/* Terminal Log */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                        <Activity size={14} className="text-cyan-400" /> Live Serial Stream Log
-                      </span>
-                      <Button variant="ghost" size="sm" onClick={serial.clearLogs} className="text-[11px] h-7 text-muted-foreground">
-                        Clear Log
-                      </Button>
-                    </div>
-                    <div className="h-44 bg-black/80 rounded-xl border border-white/15 p-3 overflow-y-auto font-mono text-xs text-slate-200 space-y-1">
-                      {serial.logs.length === 0 ? (
-                        <p className="text-muted-foreground italic text-[11px]">No serial activity logged yet. Click "Connect Arduino UNO" or tap RFID card.</p>
-                      ) : (
-                        serial.logs.map((l, idx) => (
-                          <div key={idx} className="flex gap-2 text-[11px]">
-                            <span className="text-muted-foreground shrink-0">{l.timestamp}</span>
-                            <span className={l.type === 'incoming' ? 'text-emerald-400' : l.type === 'outgoing' ? 'text-cyan-300' : 'text-purple-300'}>
-                              {l.text}
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
-
-              {/* BLUETOOTH TAB */}
-              <TabsContent value="bluetooth" className="space-y-6">
-                <div className="glass-card p-6 rounded-2xl border-white/10">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/10">
-                    <div>
-                      <h3 className="font-bold text-base text-white flex items-center gap-2">
-                        <Bluetooth className="text-blue-400" />
-                        HC-05 Bluetooth Module (Mobile Bridge)
-                      </h3>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Connects via Web Bluetooth API or Android GATT profile.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {bluetooth.isConnected ? (
-                        <Button onClick={() => bluetooth.disconnect()} variant="outline" className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs rounded-xl">
-                          Disconnect HC-05
-                        </Button>
-                      ) : (
-                        <Button onClick={() => bluetooth.pairDevice()} className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl">
-                          Pair HC-05 Module
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 my-6">
-                    <div className="p-3.5 bg-black/40 rounded-xl border border-white/10">
-                      <span className="text-[10px] text-muted-foreground block mb-1">Bluetooth State</span>
-                      <span className={`text-sm font-bold ${bluetooth.isConnected ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                        {bluetooth.isConnected ? '● Connected' : '○ Standby'}
-                      </span>
-                    </div>
-                    <div className="p-3.5 bg-black/40 rounded-xl border border-white/10">
-                      <span className="text-[10px] text-muted-foreground block mb-1">Paired Device</span>
-                      <span className="text-xs font-mono text-cyan-300 truncate block">
-                        {bluetooth.deviceName || 'None'}
-                      </span>
-                    </div>
-                    <div className="p-3.5 bg-black/40 rounded-xl border border-white/10">
-                      <span className="text-[10px] text-muted-foreground block mb-1">Module Standard</span>
-                      <span className="text-sm font-bold text-white">HC-05 SPP v2.0</span>
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-
-            {/* Hardware Simulation Control Box */}
-            <div className="glass-card p-6 rounded-2xl border-white/10 bg-gradient-to-br from-purple-950/20 to-black">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-sm text-white">Interactive Hardware Simulator</h4>
-                  <p className="text-xs text-muted-foreground">Test RFID card taps without physical Arduino UNO hardware.</p>
-                </div>
-                <div className="flex gap-2">
-                  <Button 
-                    size="sm" 
-                    onClick={() => serial.simulateRFID('DEMO_CARD_001', true)}
-                    className="bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-black border border-emerald-500/30 text-xs rounded-xl"
-                  >
-                    Simulate Authorized Tap
-                  </Button>
-                  <Button 
-                    size="sm" 
-                    onClick={() => serial.simulateRFID('UNKNOWN_99', false)}
-                    className="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white border border-red-500/30 text-xs rounded-xl"
-                  >
-                    Simulate Denied Tap
-                  </Button>
+            {/* Platform Advisory Notice */}
+            {isAndroidPlatform ? (
+              <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-xs text-cyan-300 flex items-start gap-3">
+                <Info size={18} className="shrink-0 text-cyan-400 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-white">Platform Notice: Laptop / Desktop Web Feature</p>
+                  <p className="text-muted-foreground leading-relaxed">
+                    The IoT Hardware Check connects to an external Arduino UNO + RC522 module via USB Web Serial. This feature works on Laptop/PC browsers (Vercel web or localhost). For testing card taps directly on this phone, use the <strong>Phone NFC Reader Mode</strong> from the dashboard.
+                  </p>
                 </div>
               </div>
+            ) : (
+              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2">
+                <Sparkles size={16} className="shrink-0 text-emerald-400" />
+                <span>Web Serial API Supported. Plug your Arduino UNO into any USB port and click Connect below.</span>
+              </div>
+            )}
+
+            {/* Connection & Live RC522 Visualizer */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* Left 2 Cols: Main Interactive RC522 Tap Station */}
+              <div className="lg:col-span-2 glass-card p-6 sm:p-8 rounded-2xl border-white/10 space-y-6 flex flex-col justify-between">
+                
+                {/* Hardware Status Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/10">
+                  <div>
+                    <h3 className="font-bold text-base text-white">RC522 RFID Sensor Reader</h3>
+                    <p className="text-xs text-muted-foreground font-mono">Baud Rate: 9600 • Protocol: SPI 4MHz • ISO 14443-3A</p>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    {!serial.isConnected ? (
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={serial.baudRate}
+                          onChange={(e) => serial.setBaudRate(Number(e.target.value))}
+                          className="bg-black/60 border border-white/15 text-cyan-300 text-xs rounded-xl px-2 py-2 font-mono outline-none focus:border-cyan-500"
+                        >
+                          <option value={9600}>9600 Baud</option>
+                          <option value={115200}>115200 Baud</option>
+                          <option value={57600}>57600 Baud</option>
+                          <option value={38400}>38400 Baud</option>
+                        </select>
+                        <Button
+                          onClick={async () => {
+                            const ok = await serial.connect(serial.baudRate);
+                            if (ok) {
+                              toast.success(`Connected to Arduino UNO (${serial.baudRate} Baud)!`);
+                            }
+                          }}
+                          className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-emerald-950/30"
+                        >
+                          <Usb size={14} className="mr-1.5" /> Connect Arduino UNO
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-xs px-2.5 py-1 font-mono">
+                          {serial.baudRate} BAUD
+                        </Badge>
+                        <Button
+                          variant="outline"
+                          onClick={serial.disconnect}
+                          className="border-red-500/30 text-red-400 hover:bg-red-950/30 text-xs rounded-xl"
+                        >
+                          Disconnect
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Test Simulation Button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSimulateIotTap()}
+                      className="border-white/15 text-xs rounded-xl text-muted-foreground hover:text-white"
+                      title="Test the tap animation without plugging in Arduino"
+                    >
+                      Simulate Tap
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Central RC522 Reader Interactive Target */}
+                <div className="py-8 flex flex-col items-center justify-center text-center relative">
+                  
+                  {/* Concentric Pulse Rings */}
+                  <div className="relative w-48 h-48 flex items-center justify-center mb-6">
+                    {iotTapState === 'reading' && (
+                      <>
+                        <div className="absolute inset-0 rounded-full border-2 border-cyan-400 animate-ping opacity-60" />
+                        <div className="absolute inset-[-15px] rounded-full border border-purple-500/40 animate-pulse" />
+                      </>
+                    )}
+
+                    {iotTapState === 'success' && (
+                      <div className="absolute inset-[-10px] rounded-full bg-emerald-500/15 animate-pulse blur-xl" />
+                    )}
+
+                    <div 
+                      onClick={() => handleSimulateIotTap('97:B4:E9:00')}
+                      title="Tap physical card or click to verify"
+                      className={`w-36 h-36 rounded-3xl border-2 flex flex-col items-center justify-center transition-all duration-500 shadow-2xl cursor-pointer hover:scale-105 active:scale-95 ${
+                      iotTapState === 'success'
+                        ? 'border-emerald-500 bg-emerald-950/40 text-emerald-400 shadow-[0_0_50px_rgba(16,185,129,0.5)]'
+                        : iotTapState === 'reading'
+                        ? 'border-cyan-400 bg-cyan-950/40 text-cyan-300 shadow-[0_0_50px_rgba(34,211,238,0.5)] scale-105'
+                        : 'border-white/10 bg-black/40 text-muted-foreground hover:border-cyan-400/40'
+                    }`}>
+                      {iotTapState === 'success' ? (
+                        <CheckCircle2 size={54} className="animate-in zoom-in-75 text-emerald-400" />
+                      ) : iotTapState === 'reading' ? (
+                        <Radio size={54} className="animate-pulse text-cyan-300" />
+                      ) : (
+                        <Radio size={54} className="opacity-50" />
+                      )}
+                      <span className="text-[11px] font-mono mt-2 font-bold uppercase tracking-wider">
+                        {iotTapState === 'success' ? 'Verified' : iotTapState === 'reading' ? 'Reading...' : 'RC522 Antenna'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Status Text / Result Announcement */}
+                  {iotTapState === 'success' && scannedIotCard ? (
+                    <div className="space-y-3 animate-in zoom-in-95 max-w-md">
+                      <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-xs px-3 py-1">
+                        RFID Tap Successful
+                      </Badge>
+                      <h3 className="text-2xl font-bold text-white">
+                        Card Verified: <span className="text-cyan-300">{scannedIotCard.cardName}</span>
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        UID payload verified across physical RC522 antenna registers.
+                      </p>
+
+                      {/* Scanned Card Details Card */}
+                      <div className="bg-black/60 p-4 rounded-xl border border-white/10 text-left space-y-2 font-mono text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Card UID:</span>
+                          <span className="text-cyan-300 font-bold">{scannedIotCard.uid}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Identity:</span>
+                          <span className="text-white">{scannedIotCard.cardName}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Protocol:</span>
+                          <span className="text-purple-300">{scannedIotCard.protocol}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Timestamp:</span>
+                          <span className="text-emerald-400">{scannedIotCard.timestamp}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : iotTapState === 'reading' ? (
+                    <div className="space-y-2">
+                      <Badge className="bg-cyan-500/20 text-cyan-300 border-cyan-500/40 text-xs px-3 py-1 animate-pulse">
+                        Reading Card...
+                      </Badge>
+                      <h4 className="text-base font-bold text-white">Transmitting Card UID from RC522...</h4>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <h4 className="text-base font-bold text-white">
+                        {serial.isConnected ? "Ready — Tap your NFC / RFID Card on RC522" : "Connect Arduino UNO to Begin"}
+                      </h4>
+                      <p className="text-xs text-muted-foreground max-w-sm">
+                        Hold your Blue KeyFob (97:B4:E9:00) or White card 1-2 cm from the RC522 RFID sensor.
+                      </p>
+                      <Button
+                        size="sm"
+                        onClick={() => handleSimulateIotTap('97:B4:E9:00')}
+                        className="bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 text-xs rounded-xl px-4 py-2 mt-2 font-mono shadow-md"
+                      >
+                        ⚡ Instant Trigger Card Verification (97:B4:E9:00)
+                      </Button>
+                    </div>
+                  )}
+
+                </div>
+
+                {/* Important Tip on COM port exclusivity */}
+                <div className="flex items-center gap-2 text-[11px] text-amber-300/90 bg-amber-500/10 px-3.5 py-2 rounded-xl border border-amber-500/20 font-sans">
+                  <span>⚠️ <strong>Note:</strong> If Arduino IDE is open, make sure its <strong>Serial Monitor window is closed</strong> so this browser can read the COM port.</span>
+                </div>
+
+                {/* Expanded Multi-Line Live Terminal Log Box */}
+                <div className="bg-black/80 rounded-2xl border border-white/10 overflow-hidden font-mono text-xs shadow-inner">
+                  {/* Terminal Window Chrome */}
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-white/5 border-b border-white/10">
+                    <div className="flex items-center gap-2">
+                      <div className="flex gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-red-500/80 inline-block" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80 inline-block" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80 inline-block" />
+                      </div>
+                      <span className="text-[11px] text-muted-foreground font-semibold ml-2">
+                        USB Serial Terminal Monitor
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="bg-cyan-500/10 text-cyan-300 border-cyan-500/30 text-[10px] py-0">
+                        {serial.baudRate} BAUD
+                      </Badge>
+                      <Badge variant="outline" className="bg-purple-500/10 text-purple-300 border-purple-500/30 text-[10px] py-0">
+                        {serial.bytesReceived} Bytes RX
+                      </Badge>
+                      <button
+                        onClick={() => setSerialLogs([{ id: `c-${Date.now()}`, time: new Date().toLocaleTimeString(), text: 'Log buffer cleared.' }])}
+                        className="text-[10px] text-muted-foreground hover:text-white transition-colors px-2 py-0.5 rounded bg-white/5 hover:bg-white/10"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Scrollable Terminal Output Body */}
+                  <div className="p-3.5 space-y-1.5 min-h-[160px] max-h-[220px] overflow-y-auto font-mono text-[11px] select-text">
+                    {serialLogs.map(log => (
+                      <div key={log.id} className="flex items-start gap-2">
+                        <span className="text-muted-foreground select-none">[{log.time}]</span>
+                        <span className={
+                          log.isUid ? 'text-emerald-400 font-bold bg-emerald-950/40 px-1 rounded' :
+                          log.text.includes('READY') ? 'text-cyan-300 font-semibold' :
+                          log.text.includes('CARD_DETECTED') ? 'text-purple-300 font-medium' :
+                          'text-slate-300'
+                        }>
+                          {log.text}
+                        </span>
+                      </div>
+                    ))}
+                    {!serial.isConnected && (
+                      <div className="text-amber-400/80 italic pt-1">
+                        &gt; Serial port disconnected. Plug in your Arduino UNO and click "Connect Arduino UNO" above.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Right Col: Arduino Uno + RC522 Wiring & Ready-to-Flash Code */}
+              <div className="glass-card p-6 rounded-2xl border-white/10 space-y-5">
+                
+                <div>
+                  <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                    <Code2 size={16} className="text-cyan-400" />
+                    Arduino UNO + RC522 Setup
+                  </h3>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Flash this sketch to your Arduino UNO in Arduino IDE
+                  </p>
+                </div>
+
+                {/* Wiring Reference */}
+                <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 space-y-2">
+                  <span className="text-[10px] uppercase font-bold text-purple-300 tracking-wider block">Pin Wiring Table</span>
+                  <div className="grid grid-cols-2 gap-1 text-[11px] font-mono text-muted-foreground">
+                    <div>RC522 <span className="text-white font-bold">SDA (SS)</span> → Pin 10</div>
+                    <div>RC522 <span className="text-white font-bold">SCK</span> → Pin 13</div>
+                    <div>RC522 <span className="text-white font-bold">MOSI</span> → Pin 11</div>
+                    <div>RC522 <span className="text-white font-bold">MISO</span> → Pin 12</div>
+                    <div>RC522 <span className="text-white font-bold">RST</span> → Pin 9</div>
+                    <div>RC522 <span className="text-emerald-400 font-bold">3.3V</span> → 3.3V <span className="text-amber-400 text-[10px]">(NOT 5V)</span></div>
+                    <div>RC522 <span className="text-white font-bold">GND</span> → GND</div>
+                    <div>RC522 <span className="text-muted-foreground">IRQ</span> → Unused</div>
+                  </div>
+                </div>
+
+                {/* Arduino Sketch Code Block */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Arduino Sketch (.ino)</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        navigator.clipboard.writeText(ARDUINO_RC522_SKETCH);
+                        setCopiedArduinoCode(true);
+                        toast.success("Arduino code copied to clipboard!");
+                        setTimeout(() => setCopiedArduinoCode(false), 2000);
+                      }}
+                      className="h-7 text-[11px] gap-1 text-cyan-300 hover:text-white"
+                    >
+                      {copiedArduinoCode ? <Check size={12} /> : <Copy size={12} />}
+                      {copiedArduinoCode ? "Copied" : "Copy Code"}
+                    </Button>
+                  </div>
+
+                  <pre className="bg-black/70 p-3 rounded-xl border border-white/5 text-[10px] font-mono text-cyan-300 max-h-48 overflow-y-auto whitespace-pre">
+                    {ARDUINO_RC522_SKETCH}
+                  </pre>
+                </div>
+
+              </div>
+
             </div>
 
           </div>
         )}
 
         {/* ========================================================= */}
-        {/* VIEW 5: VERIFICATION OVERLAY (FULL SCREEN MODAL)          */}
+        {/* VIEW 6: VERIFICATION OVERLAY                              */}
         {/* ========================================================= */}
         {activeView === 'verify' && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl animate-fade-in">
@@ -1055,36 +2098,36 @@ export default function BankShield() {
 
               {/* Status Headings */}
               <h3 className="text-xl font-bold text-white mb-2">
-                {verifyState === 'waiting' && 'Please Tap Your RFID Security Card'}
+                {verifyState === 'waiting' && 'Please Tap Your Authorized Card'}
                 {verifyState === 'reading' && 'Reading Card Credentials...'}
                 {verifyState === 'authorized' && 'Access Granted • Session Unlocked'}
                 {verifyState === 'denied' && 'Access Denied • Unauthorized Key'}
               </h3>
 
               <p className="text-xs text-muted-foreground mb-6">
-                {verifyState === 'waiting' && 'Hold your physical card near the RC522 RFID reader to unlock banking access.'}
-                {verifyState === 'reading' && 'Verifying cryptographic UID against authorized banking registry...'}
-                {verifyState === 'authorized' && `Authenticated UID: ${verifiedCardUid || 'DEMO_CARD_001'}. Starting encrypted session.`}
-                {verifyState === 'denied' && 'This RFID card is not enrolled in your authorized banking whitelist.'}
+                {verifyState === 'waiting' && 'Place your registered Blue Card (97:B4:E9:00) against the back of your phone.'}
+                {verifyState === 'reading' && 'Verifying cryptographic UID against authorized banking whitelist...'}
+                {verifyState === 'authorized' && `Authenticated UID: ${verifiedCardUid || '97:B4:E9:00'}. Starting encrypted session.`}
+                {verifyState === 'denied' && 'This card is not registered in your authorized whitelist.'}
               </p>
 
               {/* Simulation Quick Trigger inside Overlay */}
               <div className="p-3 bg-black/40 rounded-xl border border-white/10 mb-6">
-                <span className="text-[10px] text-muted-foreground block mb-2">Evaluator Simulator Controls</span>
+                <span className="text-[10px] text-muted-foreground block mb-2">Simulation / Quick Test Controls</span>
                 <div className="flex gap-2 justify-center">
                   <Button 
                     size="sm" 
-                    onClick={() => serial.simulateRFID('DEMO_CARD_001', true)}
+                    onClick={() => handleHardwareMessage('AUTHORIZED:97:B4:E9:00')}
                     className="bg-emerald-600/30 text-emerald-300 hover:bg-emerald-600 hover:text-black border border-emerald-500/30 text-xs py-1 h-8 rounded-lg"
                   >
-                    Tap Authorized Card
+                    Tap Blue Card (97:B4:E9:00)
                   </Button>
                   <Button 
                     size="sm" 
-                    onClick={() => serial.simulateRFID('UNKNOWN_CARD', false)}
+                    onClick={() => handleHardwareMessage('DENIED:UNKNOWN_TAG')}
                     className="bg-red-600/30 text-red-300 hover:bg-red-600 hover:text-white border border-red-500/30 text-xs py-1 h-8 rounded-lg"
                   >
-                    Tap Unknown Card
+                    Tap Unknown Tag
                   </Button>
                 </div>
               </div>
@@ -1098,14 +2141,6 @@ export default function BankShield() {
                 >
                   Cancel
                 </Button>
-                {verifyState === 'denied' && (
-                  <Button 
-                    onClick={() => setVerifyState('waiting')} 
-                    className="flex-1 bg-purple-600 hover:bg-purple-500 text-white text-xs py-5 rounded-xl"
-                  >
-                    Try Again
-                  </Button>
-                )}
               </div>
 
             </div>
@@ -1113,96 +2148,54 @@ export default function BankShield() {
         )}
 
         {/* ========================================================= */}
-        {/* VIEW 6: SECURE SESSION ACTIVE (05:00 TIMER)              */}
+        {/* VIEW 7: ACTIVE SECURE SESSION                             */}
         {/* ========================================================= */}
         {activeView === 'session' && (
-          <div className="space-y-6 animate-fade-in">
-            <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-br from-emerald-950/40 via-slate-950 to-purple-950/30 border border-emerald-500/40 shadow-2xl text-center relative overflow-hidden">
+          <div className="space-y-6 animate-fade-in max-w-3xl mx-auto">
+            <div className="glass-card p-8 rounded-3xl border-emerald-500/30 text-center shadow-2xl space-y-6 bg-gradient-to-b from-emerald-950/20 via-background to-background">
               
-              <div className="absolute top-4 right-4">
-                <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-xs px-3 py-1 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  Live Defense Mesh Active
+              <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto">
+                <ShieldCheck size={36} />
+              </div>
+
+              <div>
+                <Badge variant="outline" className="bg-emerald-500/20 text-emerald-400 border-emerald-500/40 text-xs mb-2">
+                  HARDWARE VERIFIED ACTIVE
                 </Badge>
+                <h2 className="text-3xl font-bold text-white tracking-tight">
+                  Secure Session: {activeSessionBank}
+                </h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Card Token: <span className="font-mono text-cyan-300">{activeSessionUid}</span> • Banking telemetry protected
+                </p>
               </div>
-
-              <div className="w-20 h-20 rounded-full bg-emerald-500/20 border border-emerald-400 flex items-center justify-center mx-auto mb-4 shadow-[0_0_30px_rgba(16,185,129,0.5)]">
-                <ShieldCheck size={44} className="text-emerald-400" />
-              </div>
-
-              <h2 className="text-2xl sm:text-3xl font-bold text-white mb-1">
-                Secure Banking Session Active
-              </h2>
-              <p className="text-xs sm:text-sm text-emerald-300 mb-6">
-                Unlocked for: <span className="font-bold text-white">{activeSessionBank}</span> • Authenticated UID: <span className="font-mono text-cyan-300">{activeSessionUid}</span>
-              </p>
 
               {/* Big Countdown Timer */}
-              <div className="inline-block p-6 rounded-2xl bg-black/60 border border-white/15 mb-8 shadow-inner">
-                <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground block mb-1">
-                  Session Auto-Lock Countdown
-                </span>
-                <span className="text-5xl sm:text-6xl font-mono font-bold text-emerald-400 tracking-wider">
+              <div className="p-6 bg-black/60 rounded-2xl border border-white/10 max-w-xs mx-auto">
+                <span className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">Session Timeout</span>
+                <div className="text-5xl font-mono font-bold text-cyan-300 tracking-wider">
                   {formatTimer(timeLeft)}
-                </span>
+                </div>
+                <span className="text-[11px] text-muted-foreground mt-2 block">Auto-relocks when timer expires</span>
               </div>
 
-              {/* 5 Active Defense Modules */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-3 max-w-4xl mx-auto mb-8 text-left">
-                
-                <div className="p-3.5 bg-black/40 rounded-xl border border-emerald-500/20">
-                  <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                    <MessageSquare size={14} />
-                    <span className="text-xs font-bold">SMS OTP Guard</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">Intercepts Trojan forwarders</span>
-                </div>
-
-                <div className="p-3.5 bg-black/40 rounded-xl border border-emerald-500/20">
-                  <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                    <QrCode size={14} />
-                    <span className="text-xs font-bold">QR Shield</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">Validates UPI endpoints</span>
-                </div>
-
-                <div className="p-3.5 bg-black/40 rounded-xl border border-emerald-500/20">
-                  <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                    <Wifi size={14} />
-                    <span className="text-xs font-bold">WiFi Isolation</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">Blocks ARP poisoning</span>
-                </div>
-
-                <div className="p-3.5 bg-black/40 rounded-xl border border-emerald-500/20">
-                  <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                    <Eye size={14} />
-                    <span className="text-xs font-bold">Screen Guard</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">Prevents AnyDesk mirroring</span>
-                </div>
-
-                <div className="p-3.5 bg-black/40 rounded-xl border border-emerald-500/20">
-                  <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                    <Globe size={14} />
-                    <span className="text-xs font-bold">IP Security</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">Encrypted DNS tunnel</span>
-                </div>
-
-              </div>
-
-              {/* End Session Button */}
-              <div className="flex justify-center gap-4">
+              <div className="flex justify-center gap-3 pt-4">
                 <Button 
                   onClick={() => {
                     setIsSessionActive(false);
-                    toast.success('Secure Banking Session closed and re-locked.');
+                    toast.info('Secure banking session closed.');
                     setActiveView('dashboard');
                   }}
-                  className="bg-red-600 hover:bg-red-500 text-white font-bold px-8 py-5 rounded-xl text-xs"
+                  variant="outline" 
+                  className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs rounded-xl"
                 >
-                  <Lock size={16} className="mr-2" /> End Secure Session & Lock Device
+                  End Secure Session Now
+                </Button>
+                <Button 
+                  onClick={() => setActiveView('dashboard')}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs rounded-xl"
+                >
+                  Back to Dashboard
                 </Button>
               </div>
 
@@ -1211,7 +2204,7 @@ export default function BankShield() {
         )}
 
         {/* ========================================================= */}
-        {/* VIEW 7: SESSION HISTORY                                   */}
+        {/* VIEW 8: SESSION HISTORY                                   */}
         {/* ========================================================= */}
         {activeView === 'history' && (
           <div className="space-y-6 animate-fade-in">
@@ -1226,46 +2219,33 @@ export default function BankShield() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                  <History className="text-purple-400" />
-                  Banking Session Security Log
+                  <History className="text-cyan-400" />
+                  NFC Authorization Audit Log
                 </h2>
-                <p className="text-xs text-muted-foreground">Tamper-evident log of all hardware-authorized sessions.</p>
+                <p className="text-xs text-muted-foreground">Historical records of NFC-authenticated sessions.</p>
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="glass-card p-6 rounded-2xl border-white/10 space-y-3">
               {sessions.length === 0 ? (
-                <div className="glass-card p-12 rounded-2xl text-center border-white/10">
-                  <ShieldCheck size={48} className="mx-auto mb-3 text-purple-400/40" />
-                  <h4 className="text-base font-bold text-white mb-1">No Previous Sessions</h4>
-                  <p className="text-xs text-muted-foreground mb-4">Activate Secure Banking Mode to record your first hardware verification.</p>
-                  <Button onClick={() => startVerification()} className="bg-purple-600 hover:bg-purple-500 text-white text-xs">
-                    Simulate Banking Launch
-                  </Button>
+                <div className="p-12 text-center text-muted-foreground text-xs">
+                  No previous sessions logged yet. Tap an authorized card to start a session.
                 </div>
               ) : (
                 sessions.map((sess, idx) => (
-                  <div key={sess.id || idx} className="glass-card p-4 rounded-xl border-white/10 flex items-center justify-between">
+                  <div key={idx} className="p-4 bg-black/40 rounded-xl border border-white/10 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        <ShieldCheck size={18} />
+                      <div className="p-2.5 rounded-xl bg-purple-600/20 text-cyan-300">
+                        <Lock size={16} />
                       </div>
                       <div>
                         <h4 className="font-bold text-xs text-white">{sess.app_name}</h4>
-                        <p className="text-[11px] text-muted-foreground font-mono">
-                          Card UID: {sess.rfid_uid} • Duration: {sess.duration_seconds || 300}s
-                        </p>
+                        <p className="text-[11px] font-mono text-cyan-400">Card: {sess.rfid_uid}</p>
                       </div>
                     </div>
-
-                    <div className="text-right">
-                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
-                        Authorized
-                      </Badge>
-                      <span className="block text-[10px] text-muted-foreground mt-1">
-                        {formatSafeDate(sess.started_at)}
-                      </span>
-                    </div>
+                    <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
+                      {sess.verification_status}
+                    </Badge>
                   </div>
                 ))
               )}
@@ -1273,104 +2253,7 @@ export default function BankShield() {
           </div>
         )}
 
-        {/* ========================================================= */}
-        {/* VIEW 8: HARDWARE & ANDROID ARCHITECTURE GUIDE             */}
-        {/* ========================================================= */}
-        {activeView === 'hardware-guide' && (
-          <div className="space-y-6 animate-fade-in">
-            <Button 
-              variant="ghost" 
-              onClick={() => setActiveView('dashboard')} 
-              className="gap-2 text-muted-foreground hover:text-white -ml-2"
-            >
-              <ChevronLeft size={16} /> Back to Dashboard
-            </Button>
-
-            <div>
-              <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                <Code2 className="text-amber-400" />
-                Hardware Wiring & Arduino Firmware Guide
-              </h2>
-              <p className="text-xs text-muted-foreground">Technical reference for project evaluators and hardware assembly.</p>
-            </div>
-
-            {/* Hardware Pinout Tables */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              <div className="glass-card p-5 rounded-2xl border-white/10">
-                <h3 className="font-bold text-sm text-cyan-300 mb-3 flex items-center gap-2">
-                  <Cpu size={16} /> RC522 RFID Reader Pinouts
-                </h3>
-                <div className="space-y-1.5 text-xs font-mono">
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>SDA (SS)</span><span className="text-purple-300">Arduino Pin D10</span></div>
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>SCK</span><span className="text-purple-300">Arduino Pin D13</span></div>
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>MOSI</span><span className="text-purple-300">Arduino Pin D11</span></div>
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>MISO</span><span className="text-purple-300">Arduino Pin D12</span></div>
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>RST</span><span className="text-purple-300">Arduino Pin D9</span></div>
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>3.3V</span><span className="text-emerald-400">3.3V Power (Do NOT connect 5V)</span></div>
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>GND</span><span className="text-muted-foreground">GND Ground</span></div>
-                </div>
-              </div>
-
-              <div className="glass-card p-5 rounded-2xl border-white/10">
-                <h3 className="font-bold text-sm text-blue-300 mb-3 flex items-center gap-2">
-                  <Bluetooth size={16} /> HC-05 Bluetooth Pinouts
-                </h3>
-                <div className="space-y-1.5 text-xs font-mono">
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>TX</span><span className="text-blue-300">Arduino Pin D2 (Software RX)</span></div>
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>RX</span><span className="text-blue-300">Arduino Pin D3 (Software TX)</span></div>
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>VCC</span><span className="text-emerald-400">5V Power</span></div>
-                  <div className="flex justify-between p-2 bg-black/40 rounded-lg"><span>GND</span><span className="text-muted-foreground">GND Ground</span></div>
-                </div>
-
-                <div className="mt-4 p-3 bg-purple-950/30 rounded-xl border border-purple-500/20 text-[11px] text-purple-200">
-                  <strong>Android Architecture Note:</strong> DEFENXIA uses Android <code>UsageStatsManager</code> to detect foreground banking package launches and <code>AccessibilityService</code> to overlay the hardware security gate.
-                </div>
-              </div>
-
-            </div>
-
-            {/* Arduino Code Box with 1-click Copy */}
-            <div className="glass-card p-6 rounded-2xl border-white/10">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                  <Code2 size={14} className="text-amber-400" /> defenxia_rfid_banking.ino (Arduino C++ Source)
-                </span>
-                <Button 
-                  size="sm" 
-                  onClick={() => {
-                    navigator.clipboard.writeText(ARDUINO_SKETCH_CODE);
-                    setCopiedSketch(true);
-                    toast.success('Arduino sketch copied to clipboard!');
-                    setTimeout(() => setCopiedSketch(false), 2000);
-                  }}
-                  className="bg-white/10 hover:bg-white/20 text-white text-xs h-8 rounded-lg"
-                >
-                  {copiedSketch ? <Check size={14} className="mr-1 text-emerald-400" /> : <Copy size={14} className="mr-1" />}
-                  {copiedSketch ? 'Copied' : 'Copy Sketch'}
-                </Button>
-              </div>
-
-              <pre className="p-4 bg-black/80 rounded-xl border border-white/10 text-[11px] font-mono text-cyan-300 overflow-x-auto max-h-72">
-                {ARDUINO_SKETCH_CODE}
-              </pre>
-            </div>
-
-          </div>
-        )}
-
       </div>
     </div>
   );
-}
-
-function formatSafeDate(dateStr?: string): string {
-  if (!dateStr) return 'Recently';
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return 'Recently';
-    return formatDistanceToNow(d, { addSuffix: true });
-  } catch {
-    return 'Recently';
-  }
 }

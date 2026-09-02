@@ -5,11 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { 
   Globe, 
   Search, 
-  CheckCircle, 
-  CheckCircle2,
   AlertTriangle, 
   Shield, 
-  Clock, 
   Lock, 
   ShieldCheck, 
   ShieldAlert, 
@@ -17,200 +14,20 @@ import {
   Server,
   RefreshCw,
   ExternalLink,
-  Zap
+  Zap,
+  CheckCircle2,
+  XCircle,
+  Activity
 } from "lucide-react";
-import { invokeEdgeFunction, insertWithSession } from "@/lib/supabase-client";
+import { insertWithSession } from "@/lib/supabase-client";
+import { scanUrlWithVirusTotal, VTUrlScanResult } from "@/services/virusTotalService";
+import { ScanResultAnimation } from "@/components/ScanResultAnimation";
 import { toast } from "sonner";
-
-interface ScanResult {
-  url: string;
-  status: 'safe' | 'malicious' | 'warning';
-  threats: string[];
-  scanTime: string;
-  analysis?: string;
-  recommendations?: string;
-  sslSecure?: boolean;
-  domainReputation?: 'High' | 'Moderate' | 'Suspicious' | 'Low';
-  securityScore?: number;
-  googleSafeBrowsing?: {
-    checked: boolean;
-    isSafe: boolean;
-    threatTypes?: string[];
-  };
-}
-
-interface VirusTotalResult {
-  service: string;
-  positives: number;
-  total: number;
-  status: string;
-  scanDate: string;
-  permalink: string;
-}
-
-// Trusted Top Domains & Official Portals
-const TRUSTED_DOMAINS = [
-  'google.com', 'google.co.in', 'www.google.com', 'www.google.co.in',
-  'youtube.com', 'www.youtube.com',
-  'wikipedia.org', 'en.wikipedia.org',
-  'microsoft.com', 'apple.com', 'github.com', 'amazon.com', 'amazon.in',
-  'cloudflare.com', 'mozilla.org', 'digilocker.gov.in',
-  'sbi.co.in', 'onlinesbi.sbi', 'hdfcbank.com', 'icicibank.com', 'axisbank.com', 'canarabank.com',
-  'rbi.org.in', 'npci.org.in', 'cert-in.org.in', 'cybercrime.gov.in', 'incometax.gov.in', 'uidai.gov.in',
-  'gov.in', 'nic.in', 'ac.in', 'edu.in'
-];
-
-const SUSPICIOUS_TLDS = ['.xyz', '.top', '.tk', '.ml', '.ga', '.cf', '.gq', '.work', '.click', '.buzz', '.fit', '.cam'];
-const PHISHING_KEYWORDS = ['login-update', 'verify-account', 'free-recharge', 'claim-reward', 'sbi-kyc', 'paytm-refund', 'urgent-kyc', 'unblock-card', 'lottery-winner'];
-
-async function checkGoogleSafeBrowsing(url: string, apiKey: string): Promise<{ checked: boolean; isSafe: boolean; threatTypes: string[] }> {
-  try {
-    const endpoint = `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${apiKey}`;
-    const requestBody = {
-      client: {
-        clientId: "defenxia-cyber-guard",
-        clientVersion: "1.0.0"
-      },
-      threatInfo: {
-        threatTypes: ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
-        platformTypes: ["ANY_PLATFORM"],
-        threatEntryTypes: ["URL"],
-        threatEntries: [{ url }]
-      }
-    };
-
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const matches = data.matches || [];
-      if (matches.length > 0) {
-        const types = matches.map((m: any) => m.threatType);
-        return { checked: true, isSafe: false, threatTypes: types };
-      }
-      return { checked: true, isSafe: true, threatTypes: [] };
-    }
-    return { checked: false, isSafe: true, threatTypes: [] };
-  } catch (e) {
-    console.error("Google Safe Browsing API error:", e);
-    return { checked: false, isSafe: true, threatTypes: [] };
-  }
-}
-
-function analyzeUrlLocally(rawUrl: string): ScanResult {
-  let normalized = rawUrl.trim();
-  if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
-    normalized = 'https://' + normalized;
-  }
-
-  let hostname = '';
-  let pathname = '';
-  let isHttps = normalized.startsWith('https://');
-
-  try {
-    const urlObj = new URL(normalized);
-    hostname = urlObj.hostname.toLowerCase();
-    pathname = urlObj.pathname.toLowerCase() + urlObj.search.toLowerCase();
-  } catch {
-    hostname = normalized.replace(/^https?:\/\//, '').split('/')[0].toLowerCase();
-  }
-
-  const threats: string[] = [];
-  let status: 'safe' | 'warning' | 'malicious' = 'safe';
-  let reputation: 'High' | 'Moderate' | 'Suspicious' | 'Low' = 'High';
-  let securityScore = 98;
-
-  // 1. Check if domain is a known trusted high-reputation domain
-  const isTrusted = TRUSTED_DOMAINS.some(trusted => 
-    hostname === trusted || hostname.endsWith('.' + trusted)
-  );
-
-  if (isTrusted) {
-    return {
-      url: normalized,
-      status: 'safe',
-      threats: [],
-      scanTime: new Date().toLocaleTimeString(),
-      sslSecure: true,
-      domainReputation: 'High',
-      securityScore: 100,
-      analysis: 'This website is a verified, authentic high-reputation domain with active SSL encryption and authentic digital certificates.',
-      recommendations: 'This website is secure and safe to browse.'
-    };
-  }
-
-  // 2. Protocol check (HTTP vs HTTPS)
-  if (!isHttps) {
-    threats.push('Insecure Connection: Website does not use HTTPS encryption.');
-    status = 'warning';
-    securityScore -= 20;
-    reputation = 'Moderate';
-  }
-
-  // 3. Check for Suspicious TLDs
-  const hasSuspiciousTld = SUSPICIOUS_TLDS.some(tld => hostname.endsWith(tld));
-  if (hasSuspiciousTld) {
-    threats.push('High-Risk TLD: Domain uses a top-level domain frequently associated with spam and phishing.');
-    status = 'warning';
-    securityScore -= 25;
-    reputation = 'Suspicious';
-  }
-
-  // 4. Check for Phishing Keywords in hostname or pathname
-  const foundKeywords = PHISHING_KEYWORDS.filter(kw => 
-    hostname.includes(kw) || pathname.includes(kw)
-  );
-  if (foundKeywords.length > 0) {
-    threats.push(`Deceptive Content: URL contains known fraud/phishing signatures (${foundKeywords.join(', ')}).`);
-    status = 'malicious';
-    securityScore -= 45;
-    reputation = 'Low';
-  }
-
-  // 5. Check for IP address used as hostname
-  const isIpHost = /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
-  if (isIpHost) {
-    threats.push('Direct IP Access: Domain uses raw numeric IP address instead of registered domain name.');
-    if (status !== 'malicious') status = 'warning';
-    securityScore -= 30;
-    reputation = 'Suspicious';
-  }
-
-  // 6. Excessive subdomains (e.g. sbi.co.in.login.scam.com)
-  const dotCount = (hostname.match(/\./g) || []).length;
-  if (dotCount > 3) {
-    threats.push('Excessive Subdomains: Possible domain spoofing or lookalike masquerade attempt.');
-    if (status !== 'malicious') status = 'warning';
-    securityScore -= 15;
-  }
-
-  return {
-    url: normalized,
-    status,
-    threats,
-    scanTime: new Date().toLocaleTimeString(),
-    sslSecure: isHttps,
-    domainReputation: reputation,
-    securityScore: Math.max(10, securityScore),
-    analysis: status === 'safe' 
-      ? 'Domain reputation and SSL certificate verification passed. No malicious signatures or phishing patterns detected.' 
-      : status === 'warning'
-      ? 'Potential security risks identified. Exercise caution when entering personal details.'
-      : 'High-risk security threats detected. We recommend not visiting or sharing credentials on this website.',
-    recommendations: status === 'safe'
-      ? 'Website appears legitimate and safe to use.'
-      : 'Avoid submitting banking passwords, OTPs, or card numbers on this website.'
-  };
-}
 
 const WebsiteScanner = () => {
   const [url, setUrl] = useState("");
   const [isScanning, setIsScanning] = useState(false);
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [scanResult, setScanResult] = useState<VTUrlScanResult | null>(null);
 
   const handleScan = async () => {
     if (!url.trim()) return;
@@ -224,87 +41,34 @@ const WebsiteScanner = () => {
     }
     
     try {
-      const gsbKey = import.meta.env.VITE_SAFE_BROWSING_API_KEY || 'AIzaSyDMKAEZq31NSGqAHO-E1K5M7bNE3hvi5DU';
+      // Execute live VirusTotal v3 API scan across 70+ antivirus vendors
+      const vtResult = await scanUrlWithVirusTotal(normalizedUrl);
+      setScanResult(vtResult);
 
-      // Run parallel scans: Local Heuristic, Google Safe Browsing API, and Edge Functions
-      const [localRes, gsbRes] = await Promise.all([
-        analyzeUrlLocally(normalizedUrl),
-        checkGoogleSafeBrowsing(normalizedUrl, gsbKey)
-      ]);
-
-      let finalResult = { ...localRes };
-
-      // Incorporate Google Safe Browsing API results
-      if (gsbRes.checked) {
-        finalResult.googleSafeBrowsing = {
-          checked: true,
-          isSafe: gsbRes.isSafe,
-          threatTypes: gsbRes.threatTypes
-        };
-
-        if (!gsbRes.isSafe) {
-          finalResult.status = 'malicious';
-          finalResult.securityScore = 15;
-          gsbRes.threatTypes.forEach((t) => {
-            finalResult.threats.unshift(`Google Safe Browsing Flagged: ${t.replace(/_/g, ' ')}`);
-          });
-          finalResult.analysis = `Google Safe Browsing has blacklisted this website for active security threats (${gsbRes.threatTypes.join(', ')}).`;
-        }
-      }
-
-      setScanResult(finalResult);
-
-      // Save to Supabase website_scan_results table for Report & Analysis
+      // Save genuine audit result to Supabase website_scan_results table
       try {
         await insertWithSession('website_scan_results', {
           website_url: normalizedUrl,
-          malware_detected: finalResult.threats.some(t => t.toLowerCase().includes('malware')),
-          phishing_detected: finalResult.threats.some(t => t.toLowerCase().includes('phishing') || t.toLowerCase().includes('google')),
-          threat_level: finalResult.status === 'malicious' ? 'high' : finalResult.status === 'warning' ? 'medium' : 'safe',
-          analysis_result: finalResult as any,
-          scan_type: 'google_safe_browsing'
+          malware_detected: vtResult.positives > 0,
+          phishing_detected: vtResult.threats.length > 0,
+          threat_level: vtResult.isSafe ? 'safe' : 'high',
+          analysis_result: vtResult as any,
+          scan_type: 'virustotal_v3_api'
         });
       } catch (err) {
         console.log('Saved website scan locally');
       }
 
-      if (finalResult.status === 'malicious') {
-        toast.error('⚠️ Threat Detected: High-risk website flagged by security engines!');
+      if (!vtResult.isSafe) {
+        toast.error(`🚨 Security Alert: Malicious activity flagged by ${vtResult.positives} engine(s)!`);
       } else {
-        toast.success('✅ Website scan complete: Clean and verified!');
+        toast.success(`✅ Verified Clean by VirusTotal! (0/${vtResult.totalEngines} Detections)`);
       }
     } catch (error) {
       console.error('Scan error:', error);
-      setScanResult(analyzeUrlLocally(normalizedUrl));
+      toast.error('Scan failed to reach VirusTotal server');
     } finally {
       setIsScanning(false);
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'safe': return 'text-emerald-400';
-      case 'warning': return 'text-amber-400';
-      case 'malicious': return 'text-red-400';
-      default: return 'text-muted-foreground';
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'safe': return CheckCircle;
-      case 'warning': return AlertTriangle;
-      case 'malicious': return ShieldAlert;
-      default: return Shield;
-    }
-  };
-
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'safe': return 'Website is Verified Safe';
-      case 'warning': return 'Potential Issues Detected';
-      case 'malicious': return 'Malicious Website Detected';
-      default: return 'Unknown Status';
     }
   };
 
@@ -319,34 +83,31 @@ const WebsiteScanner = () => {
           <div className="w-16 h-16 rounded-2xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center mx-auto mb-4 shadow-[0_0_20px_rgba(139,92,246,0.3)]">
             <Globe className="h-9 h-9 text-cyan-400 animate-pulse" />
           </div>
-          <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-white via-purple-200 to-cyan-300 bg-clip-text text-transparent">
-            Website Security Scanner
+          <Badge variant="outline" className="bg-primary/10 text-cyan-300 border-primary/30 text-xs px-3 py-1 mb-2 font-mono">
+            VirusTotal v3 Real-Time Threat Intelligence
+          </Badge>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-white via-purple-100 to-cyan-300 bg-clip-text text-transparent">
+            Website Threat Scanner
           </h1>
-          <div className="flex items-center justify-center gap-2 mt-1">
-            <p className="text-muted-foreground text-xs">
-              Powered by Google Safe Browsing API & Deep URL Inspection
-            </p>
-            <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px] py-0 px-2 flex items-center gap-1">
-              <Radio size={10} className="animate-pulse text-emerald-400" /> Google API Live
-            </Badge>
-          </div>
+          <p className="text-xs sm:text-sm text-muted-foreground mt-1 max-w-md mx-auto">
+            Scan any link or domain across 70+ global antivirus engines (Kaspersky, BitDefender, Google Safe Browsing, Sophos)
+          </p>
         </div>
 
-        {/* Scanner Input */}
-        <div className="glass-card p-6 rounded-2xl mb-6 animate-fade-in border-white/10 shadow-xl">
+        {/* Input Card */}
+        <div className="glass-card p-6 rounded-2xl mb-6 shadow-xl border-white/10">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Website URL or Domain
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-2">
+                Enter Website URL or Domain to Inspect
               </label>
               <Input
-                type="text"
-                placeholder="e.g. www.google.com or https://example.com"
+                type="url"
+                placeholder="e.g. https://bank-login-secure.xyz or google.com"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-                className="bg-black/40 border-white/15 text-white placeholder:text-muted-foreground rounded-xl py-5"
-                disabled={isScanning}
+                className="w-full bg-black/40 border-white/10 text-white placeholder:text-muted-foreground py-5 rounded-xl text-sm font-mono focus:border-purple-500/60"
               />
             </div>
             
@@ -358,7 +119,7 @@ const WebsiteScanner = () => {
               {isScanning ? (
                 <>
                   <Search className="h-4 w-4 mr-2 animate-spin text-cyan-300" />
-                  Scanning with Google Safe Browsing...
+                  Inspecting across 70+ VirusTotal Engines...
                 </>
               ) : (
                 <>
@@ -377,7 +138,7 @@ const WebsiteScanner = () => {
                 }}
                 className="text-[10px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition-all"
               >
-                Test Google (Clean)
+                Test Google (Verified Safe)
               </button>
               <button
                 type="button"
@@ -386,7 +147,7 @@ const WebsiteScanner = () => {
                 }}
                 className="text-[10px] bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 px-2.5 py-1 rounded-lg transition-all"
               >
-                Test Malware URL (Threat)
+                Test Malware URL (High Risk)
               </button>
               <button
                 type="button"
@@ -395,148 +156,123 @@ const WebsiteScanner = () => {
                 }}
                 className="text-[10px] bg-blue-500/10 hover:bg-blue-500/20 text-cyan-300 border border-blue-500/30 px-2.5 py-1 rounded-lg transition-all"
               >
-                Test SBI Banking Portal
+                Test Official SBI Bank
               </button>
             </div>
           </div>
         </div>
 
-        {/* Scanning Progress */}
+        {/* Scanning Progress Visualizer */}
         {isScanning && (
-          <div className="glass-card p-6 rounded-2xl mb-6 animate-fade-in border-purple-500/30">
-            <div className="text-center">
-              <Shield className="h-12 w-12 text-cyan-400 mx-auto mb-4 animate-pulse" />
-              <h3 className="text-base font-semibold text-white mb-3">Analyzing Website Security Vectors</h3>
-              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground max-w-sm mx-auto text-left">
-                <p className="flex items-center gap-1.5"><Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" /> Google Safe Browsing API</p>
-                <p className="flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-purple-400" /> SSL & TLS Encryption</p>
-                <p className="flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5 text-cyan-400" /> Domain Reputation</p>
-                <p className="flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 text-amber-400" /> Phishing Signatures</p>
+          <div className="glass-card p-8 rounded-2xl mb-6 animate-fade-in border-purple-500/30 text-center space-y-4">
+            <div className="relative w-24 h-24 mx-auto flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full border-2 border-cyan-400 animate-ping opacity-60" />
+              <div className="w-20 h-20 rounded-full bg-purple-600/20 border border-purple-500/50 flex items-center justify-center">
+                <Globe className="h-10 w-10 text-cyan-300 animate-spin" />
               </div>
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Inspecting Threat Intelligence Feeds</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Querying VirusTotal, Google Safe Browsing, Kaspersky & BitDefender databases...
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground max-w-sm mx-auto text-left pt-2 font-mono">
+              <p className="flex items-center gap-1.5"><Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" /> Multi-Engine Heuristics</p>
+              <p className="flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-purple-400" /> SSL & Domain Reputation</p>
+              <p className="flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5 text-cyan-400" /> Malware Database Match</p>
+              <p className="flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 text-amber-400" /> Phishing Signatures</p>
             </div>
           </div>
         )}
 
-        {/* Scan Results */}
-        {scanResult && (
-          <div className="glass-card p-6 rounded-2xl animate-fade-in border-white/15 mb-6 shadow-2xl">
-            <div className="text-center mb-6">
-              {React.createElement(getStatusIcon(scanResult.status), {
-                className: `h-16 w-16 mx-auto mb-3 ${getStatusColor(scanResult.status)}`
-              })}
-              <h3 className={`text-2xl font-bold mb-1 ${getStatusColor(scanResult.status)}`}>
-                {getStatusText(scanResult.status)}
-              </h3>
-              <p className="text-xs text-muted-foreground break-all bg-black/40 py-1.5 px-3 rounded-full inline-block mt-1 border border-white/10 font-mono">
+        {/* Scan Results with 3D Holographic Animation */}
+        {scanResult && !isScanning && (
+          <div className="glass-card p-6 sm:p-8 rounded-2xl animate-fade-in border-white/15 mb-6 shadow-2xl space-y-6">
+            
+            {/* 3D Result Animation Component */}
+            <ScanResultAnimation
+              status={scanResult.isSafe ? 'safe' : 'malicious'}
+              title={scanResult.isSafe ? "Website Verified Clean" : "Malicious URL Blocked"}
+              subtitle={scanResult.analysisMessage}
+              positives={scanResult.positives}
+              totalEngines={scanResult.totalEngines}
+              score={scanResult.reputationScore}
+            />
+
+            <div className="text-center">
+              <p className="text-xs text-muted-foreground break-all bg-black/40 py-1.5 px-4 rounded-full inline-block border border-white/10 font-mono">
                 {scanResult.url}
               </p>
             </div>
 
-            {/* Quick Security Metrics Badges */}
-            <div className="grid grid-cols-3 gap-2.5 mb-6 text-center">
-              <div className="p-3 bg-black/30 rounded-xl border border-white/10">
-                <span className="text-[10px] text-muted-foreground block mb-1">Google Safe Browsing</span>
-                <Badge variant="outline" className={scanResult.googleSafeBrowsing?.isSafe ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-xs" : "bg-red-500/10 text-red-400 border-red-500/30 text-xs"}>
-                  {scanResult.googleSafeBrowsing?.isSafe ? "Verified Clean" : "Threat Detected"}
-                </Badge>
+            {/* Antivirus Engine Detection Breakdown */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+              <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block mb-1">Clean Engines</span>
+                <span className="text-sm font-bold text-emerald-400 font-mono">{scanResult.stats.harmless + scanResult.stats.undetected}</span>
               </div>
-              <div className="p-3 bg-black/30 rounded-xl border border-white/10">
-                <span className="text-[10px] text-muted-foreground block mb-1">SSL Certificate</span>
-                <Badge variant="outline" className={scanResult.sslSecure ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-xs" : "bg-red-500/10 text-red-400 border-red-500/30 text-xs"}>
-                  {scanResult.sslSecure ? "HTTPS Encrypted" : "Unencrypted HTTP"}
-                </Badge>
-              </div>
-              <div className="p-3 bg-black/30 rounded-xl border border-white/10">
-                <span className="text-[10px] text-muted-foreground block mb-1">Security Score</span>
-                <span className={`text-sm font-bold ${scanResult.securityScore && scanResult.securityScore >= 80 ? "text-emerald-400" : "text-amber-400"}`}>
-                  {scanResult.securityScore ?? 95}/100
+              <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block mb-1">Malicious</span>
+                <span className={`text-sm font-bold font-mono ${scanResult.stats.malicious > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                  {scanResult.stats.malicious}
                 </span>
+              </div>
+              <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block mb-1">Suspicious</span>
+                <span className={`text-sm font-bold font-mono ${scanResult.stats.suspicious > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>
+                  {scanResult.stats.suspicious}
+                </span>
+              </div>
+              <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block mb-1">Engines Checked</span>
+                <span className="text-sm font-bold text-cyan-300 font-mono">{scanResult.totalEngines}</span>
               </div>
             </div>
 
-            {/* Scan Details */}
-            <div className="border-t border-white/10 pt-5 space-y-4">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>Scan completed at:</span>
-                <span className="flex items-center gap-1 font-mono text-white">
-                  <Clock className="h-3.5 w-3.5 text-purple-400" />
-                  {scanResult.scanTime}
-                </span>
+            {/* Detected Threats Alert Box */}
+            {scanResult.threats.length > 0 && (
+              <div className="p-4 rounded-xl bg-red-950/30 border border-red-500/30 space-y-2">
+                <h4 className="text-xs font-bold text-red-400 flex items-center gap-1.5 uppercase font-mono">
+                  <AlertTriangle size={14} /> Security Engine Detections:
+                </h4>
+                <ul className="space-y-1">
+                  {scanResult.threats.map((threat, idx) => (
+                    <li key={idx} className="text-xs text-red-300 flex items-start gap-2 font-mono">
+                      <span className="text-red-400 mt-0.5">•</span>
+                      <span>{threat}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
+            )}
 
-              {/* Analysis Text */}
-              {scanResult.analysis && (
-                <div className="p-3.5 bg-black/40 rounded-xl border border-white/10">
-                  <span className="text-[11px] font-semibold text-cyan-300 block mb-1">Google & Security Analysis:</span>
-                  <p className="text-xs text-slate-200 leading-relaxed">
-                    {scanResult.analysis}
-                  </p>
-                </div>
-              )}
-              
-              {scanResult.threats.length > 0 ? (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider mb-2 text-red-400 flex items-center gap-1.5">
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    Threats / Warnings Detected:
-                  </h4>
-                  <ul className="space-y-1.5">
-                    {scanResult.threats.map((threat, index) => (
-                      <li key={index} className="text-xs text-slate-300 flex items-start gap-2 bg-red-500/10 p-2 rounded-lg border border-red-500/20">
-                        <AlertTriangle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
-                        <span>{threat}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : (
-                <div className="text-center p-3.5 bg-emerald-500/10 rounded-xl border border-emerald-500/30">
-                  <p className="text-emerald-400 text-xs font-medium flex items-center justify-center gap-1.5">
-                    <CheckCircle className="w-4 h-4" />
-                    Google Safe Browsing database & SSL check confirmed: Clean and secure website.
-                  </p>
-                </div>
+            {/* Action Bar */}
+            <div className="flex gap-3 justify-center pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setScanResult(null);
+                  setUrl("");
+                }}
+                className="border-white/15 text-xs rounded-xl"
+              >
+                <RefreshCw size={14} className="mr-1.5" /> Scan Another Link
+              </Button>
+
+              {scanResult.isSafe && (
+                <Button
+                  onClick={() => window.open(scanResult.url, '_blank', 'noopener,noreferrer')}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-xl"
+                >
+                  <ExternalLink size={14} className="mr-1.5" /> Proceed to Safe Website
+                </Button>
               )}
             </div>
 
-            <Button
-              onClick={() => {
-                setScanResult(null);
-                setUrl("");
-              }}
-              variant="outline"
-              className="w-full mt-5 border-white/15 hover:bg-white/10 text-xs"
-            >
-              Scan Another Website
-            </Button>
           </div>
         )}
 
-        {/* Safety Tips */}
-        <div className="glass-card p-5 rounded-2xl animate-fade-in border-white/10">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-purple-300 mb-3 flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-cyan-400" />
-            Website Safety Tips:
-          </h3>
-          <ul className="text-xs text-muted-foreground space-y-2">
-            <li className="flex items-start gap-2">
-              <span className="text-primary font-bold">•</span>
-              <span>Always verify URLs and domain spellings before entering sensitive credentials.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-primary font-bold">•</span>
-              <span>Check for HTTPS and a valid lock icon in your browser address bar.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-primary font-bold">•</span>
-              <span>Be cautious of shortened links (bit.ly, tinyurl) sent via SMS or WhatsApp.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-primary font-bold">•</span>
-              <span>Banks and government portals NEVER use high-risk TLDs like <code>.xyz</code> or <code>.top</code>.</span>
-            </li>
-          </ul>
-        </div>
       </div>
     </div>
   );

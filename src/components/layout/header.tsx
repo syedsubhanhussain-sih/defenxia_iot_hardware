@@ -11,7 +11,7 @@ export const Header = () => {
   const isHomePage = location.pathname === "/";
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border/40 glass-card">
+    <header className="sticky top-0 z-50 w-full border-b border-border/40 glass-card pt-[env(safe-area-inset-top,0px)]">
       <div className="container flex h-16 items-center justify-between px-4">
         <button
           onClick={() => navigate("/")}

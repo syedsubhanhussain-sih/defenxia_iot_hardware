@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { User, Session } from '@supabase/supabase-js';
 import { toast } from 'sonner';
+import { getOAuthRedirectUrl } from '@/lib/api-config';
 
 interface AuthContextType {
   user: User | null;
@@ -28,7 +29,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [activeTab, setActiveTab] = useState<'login' | 'signup'>('login');
 
   useEffect(() => {
-    // 1. Get initial session
+    // 1. Check for access_token in URL hash (from OAuth callback)
+    const hash = window.location.hash;
+    if (hash && (hash.includes('access_token=') || hash.includes('refresh_token='))) {
+      const params = new URLSearchParams(hash.replace(/^#/, ''));
+      const access_token = params.get('access_token');
+      const refresh_token = params.get('refresh_token');
+      if (access_token && refresh_token) {
+        supabase.auth.setSession({ access_token, refresh_token }).then(({ data }) => {
+          if (data?.session) {
+            setSession(data.session);
+            setUser(data.session.user);
+            setIsLoading(false);
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+        });
+      }
+    }
+
+    // 2. Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -104,12 +123,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async () => {
     try {
-      // Dynamic origin: automatically uses current Vercel URL on production or localhost in dev
-      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+      const redirectUrl = getOAuthRedirectUrl();
+      console.log('[DEFENXIA AUTH] Production OAuth Redirect URL:', redirectUrl);
+
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: currentOrigin || undefined,
+          redirectTo: redirectUrl,
           queryParams: {
             access_type: 'offline',
             prompt: 'consent'

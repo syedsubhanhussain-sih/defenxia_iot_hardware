@@ -1,146 +1,106 @@
-import { useState, useRef } from "react";
+import React, { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { invokeEdgeFunction, insertWithSession } from "@/lib/supabase-client";
+import { insertWithSession } from "@/lib/supabase-client";
 import { toast } from "sonner";
-import { Shield, AlertTriangle, CheckCircle, Upload, FileCheck, X } from "lucide-react";
-import CryptoJS from "crypto-js";
-
-interface ScanResult {
-  service: string;
-  resource: string;
-  positives: number;
-  total: number;
-  status: string;
-  scanDate: string;
-  permalink?: string;
-  verbose_msg?: string;
-  scans?: any;
-}
+import { 
+  Shield, 
+  AlertTriangle, 
+  CheckCircle, 
+  Upload, 
+  FileCheck, 
+  X, 
+  Image as ImageIcon, 
+  FileText, 
+  FileCode, 
+  File, 
+  RefreshCw, 
+  Hash, 
+  CheckCircle2, 
+  XCircle,
+  Radio,
+  Lock
+} from "lucide-react";
+import { scanFileWithVirusTotal, VTFileScanResult } from "@/services/virusTotalService";
+import { ScanResultAnimation } from "@/components/ScanResultAnimation";
 
 const VirusScanner = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [scanResult, setScanResult] = useState<VTFileScanResult | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const calculateFileHash = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const wordArray = CryptoJS.lib.WordArray.create(e.target?.result as ArrayBuffer);
-          const hash = CryptoJS.SHA256(wordArray).toString();
-          resolve(hash);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsArrayBuffer(file);
-    });
-  };
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // Check file size (max 32MB for VirusTotal API)
       if (file.size > 32 * 1024 * 1024) {
         toast.error('File size must be less than 32MB');
         return;
       }
       setSelectedFile(file);
       setScanResult(null);
+
+      // Create preview if it's an image
+      if (file.type.startsWith('image/')) {
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+      } else {
+        setPreviewUrl(null);
+      }
     }
   };
 
   const handleScan = async () => {
     if (!selectedFile) {
-      toast.error('Please select a file to scan');
+      toast.error('Please select a file or photo to scan');
       return;
     }
 
     setIsScanning(true);
     try {
-      // Convert file to base64
-      toast.info('Preparing file for upload...');
-      const fileBase64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(',')[1];
-          resolve(base64);
-        };
-        reader.onerror = () => reject(new Error('Failed to read file'));
-        reader.readAsDataURL(selectedFile);
-      });
-      
-      // Upload and scan using VirusTotal API
-      toast.info('Uploading file to VirusTotal...');
-      const { data, error } = await invokeEdgeFunction('virus-scan', {
-        fileContent: fileBase64,
-        fileName: selectedFile.name
-      });
+      toast.info('Analyzing file signature and SHA-256 hash with VirusTotal...');
+      const result = await scanFileWithVirusTotal(selectedFile);
+      setScanResult(result);
 
-      if (error) {
-        console.error('VirusTotal scan error:', error);
-        toast.error('Failed to scan file with VirusTotal');
+      // Save to Supabase virus_scan_results table for Report & Analysis
+      try {
+        await insertWithSession('virus_scan_results', {
+          file_name: selectedFile.name,
+          file_hash: result.sha256,
+          virus_detected: !result.isSafe,
+          virus_names: result.threatNames,
+          threat_level: result.isSafe ? 'safe' : 'high',
+          analysis_result: result as any,
+          scan_type: 'virustotal_v3_api'
+        });
+      } catch (err) {
+        console.log('Saved virus scan locally');
+      }
+
+      if (result.isSafe) {
+        toast.success(`✅ File is Clean! 0/${result.totalEngines} detections across global antivirus engines.`);
       } else {
-        setScanResult(data);
-
-        // Save to Supabase virus_scan_results table for Report & Analysis
-        try {
-          const isMalicious = (data?.positives || 0) > 0 || data?.status === 'malicious';
-          await insertWithSession('virus_scan_results', {
-            file_name: selectedFile.name,
-            file_hash: data?.resource || 'sha256-hash',
-            virus_detected: isMalicious,
-            virus_names: isMalicious ? ['Trojan.Generic', 'Riskware.Script'] : [],
-            threat_level: isMalicious ? 'high' : 'safe',
-            analysis_result: data as any,
-            scan_type: 'virustotal_file_engine'
-          });
-        } catch (err) {
-          console.log('Saved virus scan locally');
-        }
-
-        if (data.status === 'clean') {
-          toast.success('File is clean! No threats detected.');
-        } else if (data.status === 'malicious') {
-          toast.error(`Threat detected! ${data.positives} out of ${data.total} engines flagged this file.`);
-        } else {
-          toast.info('Scan completed');
-        }
+        toast.error(`🚨 Threat Detected! Flagged by ${result.positives} antivirus vendor(s).`);
       }
     } catch (err) {
       console.error('Scan error:', err);
-      toast.error('Error performing scan');
+      toast.error('Error connecting to VirusTotal threat database');
     } finally {
       setIsScanning(false);
     }
   };
 
   const handleRemoveFile = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
     setSelectedFile(null);
     setScanResult(null);
+    setPreviewUrl(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'clean': return 'text-green-500';
-      case 'malicious': return 'text-red-500';
-      default: return 'text-yellow-500';
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'clean': return CheckCircle;
-      case 'malicious': return AlertTriangle;
-      default: return Shield;
     }
   };
 
@@ -149,167 +109,224 @@ const VirusScanner = () => {
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  const getFileIcon = (file: File) => {
+    if (file.type.startsWith('image/')) return <ImageIcon className="h-8 w-8 text-cyan-400" />;
+    if (file.type.includes('pdf') || file.type.includes('document')) return <FileText className="h-8 w-8 text-blue-400" />;
+    if (file.name.endsWith('.apk') || file.name.endsWith('.exe')) return <FileCode className="h-8 w-8 text-purple-400" />;
+    return <File className="h-8 w-8 text-emerald-400" />;
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-4xl">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <Shield className="h-8 w-8 text-primary" />
-            <h1 className="text-3xl font-bold">Scan Files</h1>
+    <div className="min-h-screen bg-background p-4 pb-20 relative overflow-hidden">
+      {/* Glow Blobs */}
+      <div className="absolute top-10 right-1/4 w-80 h-80 bg-cyan-600/10 rounded-full blur-3xl animate-pulse -z-10" />
+      <div className="absolute bottom-10 left-1/4 w-80 h-80 bg-purple-600/10 rounded-full blur-3xl animate-pulse -z-10" />
+
+      <div className="container mx-auto max-w-2xl relative z-10">
+        
+        {/* Header */}
+        <div className="text-center mb-8 animate-fade-in">
+          <div className="w-16 h-16 rounded-2xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center mx-auto mb-4 shadow-[0_0_20px_rgba(6,182,212,0.3)]">
+            <Shield className="h-9 h-9 text-cyan-300 animate-pulse" />
           </div>
-          <p className="text-muted-foreground">
-            Upload files to scan for viruses and malware using VirusTotal's comprehensive antivirus engines
+          <Badge variant="outline" className="bg-primary/10 text-cyan-300 border-primary/30 text-xs px-3 py-1 mb-2 font-mono">
+            VirusTotal v3 Multi-Engine Defense
+          </Badge>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-white via-cyan-100 to-purple-300 bg-clip-text text-transparent">
+            File & Photo Malware Scanner
+          </h1>
+          <p className="text-xs sm:text-sm text-muted-foreground mt-1 max-w-md mx-auto">
+            Scan APKs, documents, executables, or photos for hidden trojans, ransomware, and spyware across 70+ antivirus engines.
           </p>
         </div>
 
-        <Card className="glass-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FileCheck className="h-5 w-5" />
-              File Scanner
-            </CardTitle>
-            <CardDescription>
-              Upload a file to check for malware (Max size: 32MB)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors">
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={handleFileSelect}
-                className="hidden"
-                id="file-upload"
-              />
-              <label htmlFor="file-upload" className="cursor-pointer">
-                <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-lg font-medium mb-2">
-                  {selectedFile ? 'File Selected' : 'Choose a file to scan'}
-                </p>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Click to browse or drag and drop
-                </p>
-              </label>
-              
-              {selectedFile && (
-                <div className="mt-4 p-4 bg-secondary/50 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <FileCheck className="h-8 w-8 text-primary" />
-                      <div className="text-left">
-                        <p className="font-medium">{selectedFile.name}</p>
-                        <p className="text-sm text-muted-foreground">{formatFileSize(selectedFile.size)}</p>
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={handleRemoveFile}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <X className="h-5 w-5" />
-                    </Button>
+        {/* Upload Box Card */}
+        <div className="glass-card p-6 sm:p-8 rounded-2xl mb-6 shadow-xl border-white/10 space-y-6">
+          
+          <div 
+            onClick={() => fileInputRef.current?.click()}
+            className="border-2 border-dashed border-white/15 hover:border-cyan-400/50 rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 bg-black/20 hover:bg-cyan-950/10 group"
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={handleFileSelect}
+              className="hidden"
+              accept="*/*"
+            />
+
+            {!selectedFile ? (
+              <div className="space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto text-muted-foreground group-hover:text-cyan-300 group-hover:scale-110 transition-all">
+                  <Upload size={28} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white group-hover:text-cyan-300 transition-colors">
+                    Click to browse or drag & drop any file or photo
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Supports APK, PDF, EXE, ZIP, DOCX, JPG, PNG (Max 32MB)
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {previewUrl ? (
+                  <div className="relative inline-block">
+                    <img 
+                      src={previewUrl} 
+                      alt="Selected photo" 
+                      className="max-h-36 rounded-xl border border-white/20 mx-auto object-cover shadow-lg"
+                    />
                   </div>
-                </div>
-              )}
-            </div>
-
-            <Button 
-              onClick={handleScan} 
-              disabled={isScanning || !selectedFile}
-              className="w-full"
-              size="lg"
-            >
-              {isScanning ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                  Scanning...
-                </>
-              ) : (
-                <>
-                  <Shield className="mr-2 h-4 w-4" />
-                  Scan File
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {scanResult && (
-          <Card className="mt-6 glass-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                {(() => {
-                  const Icon = getStatusIcon(scanResult.status);
-                  return <Icon className={`h-5 w-5 ${getStatusColor(scanResult.status)}`} />;
-                })()}
-                Scan Results
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4">
-                <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-lg">
-                  <span className="text-sm font-medium">Status</span>
-                  <Badge variant={scanResult.status === 'clean' ? 'default' : 'destructive'}>
-                    {scanResult.status.toUpperCase()}
-                  </Badge>
-                </div>
-                
-                <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-lg">
-                  <span className="text-sm font-medium">Detection Ratio</span>
-                  <span className={`font-bold ${getStatusColor(scanResult.status)}`}>
-                    {scanResult.positives} / {scanResult.total}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-lg">
-                  <span className="text-sm font-medium">File Hash</span>
-                  <span className="text-xs font-mono truncate max-w-[200px]">{scanResult.resource}</span>
-                </div>
-
-                <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-lg">
-                  <span className="text-sm font-medium">Scan Date</span>
-                  <span className="text-sm">{new Date(scanResult.scanDate).toLocaleString()}</span>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                {scanResult.permalink && (
-                  <Button 
-                    variant="outline" 
-                    className="flex-1"
-                    onClick={() => window.open(scanResult.permalink, '_blank')}
-                  >
-                    View Detailed Report
-                  </Button>
+                ) : (
+                  <div className="flex justify-center">
+                    {getFileIcon(selectedFile)}
+                  </div>
                 )}
-                <Button 
-                  variant="outline" 
-                  className="flex-1"
-                  onClick={handleRemoveFile}
-                >
-                  Scan Another File
-                </Button>
+                <div>
+                  <h4 className="text-sm font-bold text-white truncate max-w-xs mx-auto">
+                    {selectedFile.name}
+                  </h4>
+                  <p className="text-xs text-cyan-300 font-mono mt-0.5">
+                    {formatFileSize(selectedFile.size)} • Ready for VirusTotal Analysis
+                  </p>
+                </div>
               </div>
-            </CardContent>
-          </Card>
+            )}
+          </div>
+
+          {/* Action Buttons */}
+          {selectedFile && !isScanning && !scanResult && (
+            <div className="flex gap-3">
+              <Button
+                onClick={handleScan}
+                className="flex-1 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white py-5 rounded-xl font-semibold shadow-lg shadow-cyan-600/20 text-xs sm:text-sm"
+              >
+                <Shield className="h-4 w-4 mr-2" />
+                Scan File with VirusTotal
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleRemoveFile}
+                className="border-white/15 text-muted-foreground hover:text-white rounded-xl"
+              >
+                <X size={16} />
+              </Button>
+            </div>
+          )}
+
+        </div>
+
+        {/* Scanning Spinner */}
+        {isScanning && (
+          <div className="glass-card p-8 rounded-2xl mb-6 animate-fade-in border-cyan-500/30 text-center space-y-4">
+            <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full border-2 border-cyan-400 animate-ping opacity-60" />
+              <div className="w-16 h-16 rounded-full bg-cyan-600/20 border border-cyan-500/50 flex items-center justify-center">
+                <RefreshCw className="h-8 w-8 text-cyan-300 animate-spin" />
+              </div>
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Inspecting across VirusTotal Global Signatures</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Calculating SHA-256 hash & auditing across Kaspersky, BitDefender, Microsoft Defender, and 70+ engines...
+              </p>
+            </div>
+          </div>
         )}
 
-        <Card className="mt-6 glass-card">
-          <CardHeader>
-            <CardTitle>About VirusTotal File Scanning</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>• VirusTotal analyzes files with 60+ antivirus engines</p>
-            <p>• File scanning verifies known malware signatures</p>
-            <p>• Results show detection ratio across multiple security vendors</p>
-            <p>• Maximum file size: 32MB per scan</p>
-            <p>• Files are analyzed using SHA-256 hash for privacy</p>
-          </CardContent>
-        </Card>
+        {/* Results with 3D Holographic Animation */}
+        {scanResult && !isScanning && (
+          <div className="glass-card p-6 sm:p-8 rounded-2xl animate-fade-in border-white/15 mb-6 shadow-2xl space-y-6">
+            
+            {/* 3D Result Animation Component */}
+            <ScanResultAnimation
+              status={scanResult.isSafe ? 'safe' : 'malicious'}
+              title={scanResult.isSafe ? "File Verified Clean" : "Malicious Code Detected!"}
+              subtitle={scanResult.analysisMessage}
+              positives={scanResult.positives}
+              totalEngines={scanResult.totalEngines}
+            />
+
+            {/* File & Hash Specs */}
+            <div className="bg-black/50 p-4 rounded-xl border border-white/10 space-y-2 text-xs font-mono">
+              <div className="flex justify-between items-center text-muted-foreground">
+                <span>File Name:</span>
+                <span className="text-white font-bold truncate max-w-[200px]">{scanResult.fileName}</span>
+              </div>
+              <div className="flex justify-between items-center text-muted-foreground">
+                <span>File Size:</span>
+                <span className="text-cyan-300">{formatFileSize(scanResult.fileSize)}</span>
+              </div>
+              <div className="flex justify-between items-center text-muted-foreground">
+                <span>SHA-256 Hash:</span>
+                <span className="text-purple-300 truncate max-w-[200px]" title={scanResult.sha256}>
+                  {scanResult.sha256}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-muted-foreground">
+                <span>Scan Timestamp:</span>
+                <span className="text-emerald-400">{scanResult.scanDate}</span>
+              </div>
+            </div>
+
+            {/* Engine Detection Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+              <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block mb-1">Clean Engines</span>
+                <span className="text-sm font-bold text-emerald-400 font-mono">{scanResult.stats.harmless + scanResult.stats.undetected}</span>
+              </div>
+              <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block mb-1">Malicious</span>
+                <span className={`text-sm font-bold font-mono ${scanResult.stats.malicious > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                  {scanResult.stats.malicious}
+                </span>
+              </div>
+              <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block mb-1">Suspicious</span>
+                <span className="text-sm font-bold text-amber-400 font-mono">{scanResult.stats.suspicious}</span>
+              </div>
+              <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                <span className="text-[10px] text-muted-foreground uppercase font-mono block mb-1">Total Engines</span>
+                <span className="text-sm font-bold text-cyan-300 font-mono">{scanResult.totalEngines}</span>
+              </div>
+            </div>
+
+            {/* Flagged Threat Signatures if Malicious */}
+            {scanResult.threatNames.length > 0 && (
+              <div className="p-4 rounded-xl bg-red-950/30 border border-red-500/30 space-y-2">
+                <h4 className="text-xs font-bold text-red-400 flex items-center gap-1.5 uppercase font-mono">
+                  <AlertTriangle size={14} /> Flagged Malware Signatures:
+                </h4>
+                <ul className="space-y-1">
+                  {scanResult.threatNames.map((name, idx) => (
+                    <li key={idx} className="text-xs text-red-300 flex items-start gap-2 font-mono">
+                      <span className="text-red-400 mt-0.5">•</span>
+                      <span>{name}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Action Bar */}
+            <div className="flex gap-3 justify-center pt-2">
+              <Button
+                variant="outline"
+                onClick={handleRemoveFile}
+                className="border-white/15 text-xs rounded-xl"
+              >
+                <RefreshCw size={14} className="mr-1.5" /> Scan Another File or Photo
+              </Button>
+            </div>
+
+          </div>
+        )}
+
       </div>
     </div>
   );

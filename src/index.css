@@ -278,4 +278,13 @@
     background: conic-gradient(from 0deg, transparent, hsl(var(--primary-glow) / 0.1), transparent);
     animation: wave 20s linear infinite;
   }
+
+  /* Safe Area Handling for Notch, Status Bar & Gesture Navigation */
+  .safe-area-top {
+    padding-top: max(env(safe-area-inset-top, 0px), 0px);
+  }
+
+  .safe-area-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px);
+  }
 }

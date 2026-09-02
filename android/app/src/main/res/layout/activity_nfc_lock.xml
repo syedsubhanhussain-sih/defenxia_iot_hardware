@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#030712">
+
+    <!-- 1. MASTER LOCK OVERLAY BACKGROUND (Exact Master Visual Design) -->
+    <ImageView
+        android:id="@+id/ivMasterOverlayBg"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="Defenxia Master Lock Overlay"
+        android:scaleType="centerCrop"
+        android:src="@drawable/defenxia_lock_overlay" />
+
+    <!-- 2. INTERACTIVE HUD OVERLAYS & DYNAMIC COMPONENTS -->
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fitsSystemWindows="false"
+        android:paddingHorizontal="24dp">
+
+        <!-- Dynamic Locked Application Header (Replaces old static/hardcoded branding) -->
+        <LinearLayout
+            android:id="@+id/appHeaderContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignParentTop="true"
+            android:layout_marginTop="160dp"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <com.defenxia.security.guard.LockedAppHeader
+                android:id="@+id/lockedAppHeader"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <!-- Center NFC Scanner Glow Ring (Provides live interactive feedback over center HUD) -->
+        <FrameLayout
+            android:id="@+id/centerScannerTarget"
+            android:layout_width="220dp"
+            android:layout_height="220dp"
+            android:layout_centerInParent="true">
+
+            <View
+                android:id="@+id/nfcGlowRing"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:alpha="0.0"
+                android:background="@drawable/bg_status_dot_verifying" />
+        </FrameLayout>
+
+        <!-- Bottom Controls & Status Area -->
+        <LinearLayout
+            android:id="@+id/bottomControlsLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignParentBottom="true"
+            android:layout_marginBottom="32dp"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <!-- Dynamic NFC Live Status Pill -->
+            <LinearLayout
+                android:id="@+id/statusPillContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:background="@drawable/bg_status_pill"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <View
+                    android:id="@+id/viewStatusDot"
+                    android:layout_width="8dp"
+                    android:layout_height="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/bg_status_dot_ready" />
+
+                <TextView
+                    android:id="@+id/tvStatusBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:letterSpacing="0.06"
+                    android:text="READY"
+                    android:textColor="#10B981"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="12dp"
+                    android:layout_marginHorizontal="10dp"
+                    android:background="#30FFFFFF" />
+
+                <TextView
+                    android:id="@+id/tvStatusMessage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="Waiting for NFC Card tap..."
+                    android:textColor="#E2E8F0"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- Card UID Details (Appears when card is scanned) -->
+            <TextView
+                android:id="@+id/tvUidInfo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:background="#99070B1E"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="5dp"
+                android:textColor="#38BDF8"
+                android:textSize="11sp"
+                android:typeface="monospace"
+                android:visibility="gone"
+                tools:text="Card UID: 97:B4:E9:00" />
+
+            <!-- Interactive Exit to Home Button -->
+            <LinearLayout
+                android:id="@+id/btnExitToHome"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:background="@drawable/bg_exit_home_btn"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_marginEnd="10dp"
+                    android:contentDescription="Exit Home Icon"
+                    android:src="@drawable/ic_home_outline" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:letterSpacing="0.1"
+                    android:text="EXIT TO HOME"
+                    android:textColor="#C084FC"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+
+    </RelativeLayout>
+
+</FrameLayout>

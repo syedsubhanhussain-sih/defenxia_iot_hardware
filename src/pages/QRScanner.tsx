@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import QrScanner from "qr-scanner";
 import { insertWithSession, invokeEdgeFunction } from "@/lib/supabase-client";
+import { nativeNfcService, isNativeAndroid } from "@/services/nativeNfcService";
+import { ScanResultAnimation } from "@/components/ScanResultAnimation";
 import { toast } from "sonner";
 
 interface VTAnalysisStats {
@@ -171,12 +173,20 @@ const QRScanner = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [scanResult, setScanResult] = useState<QRScanResult | null>(null);
   const [hasCamera, setHasCamera] = useState(true);
+  const [cameraPermissionGranted, setCameraPermissionGranted] = useState(true);
   const [manualInput, setManualInput] = useState("");
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const qrScannerRef = useRef<QrScanner | null>(null);
 
   useEffect(() => {
+    // Check initial camera permission on Android
+    if (isNativeAndroid()) {
+      nativeNfcService.checkCameraPermission().then(res => {
+        setCameraPermissionGranted(res.granted);
+      });
+    }
+
     return () => {
       if (qrScannerRef.current) {
         qrScannerRef.current.stop();
@@ -240,6 +250,27 @@ const QRScanner = () => {
   const startScanning = async () => {
     if (!videoRef.current) return;
 
+    // Check & request camera permission on native Android
+    if (isNativeAndroid()) {
+      try {
+        const perm = await nativeNfcService.checkCameraPermission();
+        if (!perm.granted) {
+          toast.info("Requesting Camera Permission...");
+          await nativeNfcService.requestCameraPermission();
+          await new Promise(r => setTimeout(r, 600));
+          const checkAgain = await nativeNfcService.checkCameraPermission();
+          if (!checkAgain.granted) {
+            setCameraPermissionGranted(false);
+            toast.error("Camera permission is required to scan QR codes.");
+            return;
+          }
+        }
+        setCameraPermissionGranted(true);
+      } catch (e) {
+        console.warn("Camera permission check error:", e);
+      }
+    }
+
     try {
       setIsScanning(true);
       setScanResult(null);
@@ -261,10 +292,15 @@ const QRScanner = () => {
 
       qrScannerRef.current = qrScanner;
       await qrScanner.start();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error starting QR scanner:", error);
-      setHasCamera(false);
       setIsScanning(false);
+      if (error?.name === 'NotAllowedError' || error?.message?.includes('Permission') || error?.message?.includes('denied')) {
+        setCameraPermissionGranted(false);
+        toast.error("Camera access denied. Please allow camera permission in settings.");
+      } else {
+        setHasCamera(false);
+      }
     }
   };
 
@@ -334,11 +370,34 @@ const QRScanner = () => {
             />
             
             {!isScanning && !scanResult && !isAnalyzing && (
-              <div className="text-center p-6">
-                <Camera className="h-12 w-12 text-purple-400 mx-auto mb-3 animate-pulse" />
-                <p className="text-xs text-muted-foreground max-w-xs mx-auto">
-                  {hasCamera ? "Click 'Start Camera Scanner' or paste a test QR string below." : "Camera access not available in this browser."}
-                </p>
+              <div className="text-center p-6 space-y-2">
+                <Camera className="h-12 w-12 text-purple-400 mx-auto mb-2 animate-pulse" />
+                {!cameraPermissionGranted ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-amber-400 font-semibold">Camera Permission Required</p>
+                    <p className="text-[11px] text-muted-foreground max-w-xs mx-auto">
+                      Allow Defenxia camera access to scan physical QR codes directly on your device.
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        await nativeNfcService.requestCameraPermission();
+                        const check = await nativeNfcService.checkCameraPermission();
+                        setCameraPermissionGranted(check.granted);
+                        if (check.granted) {
+                          startScanning();
+                        }
+                      }}
+                      className="bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-xl mt-1"
+                    >
+                      Grant Camera Permission
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+                    {hasCamera ? "Click 'Start Camera Scanner' or paste a test QR string below." : "Camera access not available in this browser."}
+                  </p>
+                )}
               </div>
             )}
 
@@ -351,20 +410,13 @@ const QRScanner = () => {
             )}
 
             {scanResult && !isAnalyzing && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 p-6 text-center animate-in zoom-in-95">
-                {scanResult.isSafe ? (
-                  <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center mb-3 shadow-[0_0_30px_rgba(16,185,129,0.5)]">
-                    <CheckCircle2 size={36} className="text-emerald-400" />
-                  </div>
-                ) : (
-                  <div className="w-16 h-16 rounded-full bg-red-500/20 border-2 border-red-500 flex items-center justify-center mb-3 shadow-[0_0_30px_rgba(239,68,68,0.5)]">
-                    <ShieldAlert size={36} className="text-red-400" />
-                  </div>
-                )}
-                
-                <h3 className={`text-xl font-bold mb-1 ${scanResult.isSafe ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {scanResult.isSafe ? 'QR Code Verified Safe' : 'Malicious QR Threat Blocked'}
-                </h3>
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 p-6 text-center animate-in zoom-in-95 overflow-y-auto">
+                <ScanResultAnimation
+                  status={scanResult.isSafe ? 'safe' : 'malicious'}
+                  title={scanResult.isSafe ? 'QR Code Verified Safe' : 'Malicious QR Threat Blocked'}
+                  subtitle={scanResult.vtMessage}
+                  totalEngines={72}
+                />
                 <p className="text-xs text-muted-foreground max-w-md break-all font-mono bg-black/60 px-3 py-1.5 rounded-lg border border-white/10 mt-1">
                   {scanResult.raw}
                 </p>

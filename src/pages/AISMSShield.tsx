@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, MessageSquareWarning, ShieldAlert, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,6 +87,12 @@ const AISMSShield = () => {
   ]);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll chat smoothly to bottom upon new message or AI response
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
 
   // SMS Scanner state
   const [smsText, setSmsText] = useState("");
@@ -259,56 +265,56 @@ const AISMSShield = () => {
 
           {/* AI Chatbot Tab */}
           <TabsContent value="ai-chat" className="flex-1 flex flex-col">
-            <ScrollArea className="flex-1 p-4 max-h-[500px]">
-              <div className="space-y-4">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex gap-3 ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div className={`flex gap-3 max-w-[80%] ${message.sender === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                      <div className="flex-shrink-0">
-                        {message.sender === 'ai' ? (
-                          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-                            <Bot size={16} className="text-primary" />
-                          </div>
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">
-                            <User size={16} className="text-secondary-foreground" />
-                          </div>
-                        )}
-                      </div>
-                      <div
-                        className={`rounded-lg p-3 ${
-                          message.sender === 'ai'
-                            ? 'bg-secondary text-secondary-foreground'
-                            : 'bg-primary text-primary-foreground'
-                        }`}
-                      >
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                        <p className="text-xs opacity-70 mt-1">
-                          {message.timestamp.toLocaleTimeString()}
-                        </p>
-                      </div>
+            <div className="h-[55vh] min-h-[360px] max-h-[560px] overflow-y-auto p-4 space-y-4 pr-2">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex gap-3 ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div className={`flex gap-3 max-w-[80%] ${message.sender === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                    <div className="flex-shrink-0">
+                      {message.sender === 'ai' ? (
+                        <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+                          <Bot size={16} className="text-primary" />
+                        </div>
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">
+                          <User size={16} className="text-secondary-foreground" />
+                        </div>
+                      )}
+                    </div>
+                    <div
+                      className={`rounded-lg p-3 ${
+                        message.sender === 'ai'
+                          ? 'bg-secondary text-secondary-foreground'
+                          : 'bg-primary text-primary-foreground'
+                      }`}
+                    >
+                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                      <p className="text-xs opacity-70 mt-1">
+                        {message.timestamp.toLocaleTimeString()}
+                      </p>
                     </div>
                   </div>
-                ))}
-                {isLoading && (
-                  <div className="flex gap-3 justify-start">
-                    <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-                      <Bot size={16} className="text-primary" />
-                    </div>
-                    <div className="bg-secondary text-secondary-foreground rounded-lg p-3">
-                      <div className="flex gap-1">
-                        <div className="w-2 h-2 bg-current rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                        <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                      </div>
+                </div>
+              ))}
+              {isLoading && (
+                <div className="flex gap-3 justify-start">
+                  <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+                    <Bot size={16} className="text-primary" />
+                  </div>
+                  <div className="bg-secondary text-secondary-foreground rounded-lg p-3">
+                    <div className="flex gap-1">
+                      <div className="w-2 h-2 bg-current rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                      <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                     </div>
                   </div>
-                )}
-              </div>
-            </ScrollArea>
+                </div>
+              )}
+              {/* Auto-scroll target anchor */}
+              <div ref={messagesEndRef} />
+            </div>
 
             <div className="p-4 border-t border-border">
               <div className="flex gap-2">

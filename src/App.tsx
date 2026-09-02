@@ -1,13 +1,16 @@
+import React, { useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import { Header } from "./components/layout/header";
 import { Footer } from "./components/layout/footer";
 import { SimulationProvider, useSimulation } from "./contexts/SimulationContext";
 import { AuthProvider } from "./contexts/AuthContext";
 import { AuthModal } from "./components/AuthModal";
+import { ScrollToTop } from "./components/ScrollToTop";
+import { nativeNfcService } from "./services/nativeNfcService";
 import Homepage from "./pages/Homepage";
 import Scanning from "./pages/Scanning";
 import QRScanner from "./pages/QRScanner";
@@ -33,9 +36,38 @@ const queryClient = new QueryClient();
 
 const AppContent = () => {
   const { isSimulating } = useSimulation();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Hardware Back Button Navigation Handling (Fixes Issue 10)
+  useEffect(() => {
+    const handleHardwareBack = () => {
+      // 1. Dispatch custom event to check if active view (e.g. BankShield subview) intercepts it
+      const subViewEvent = new CustomEvent('defenxia:subViewBack', { cancelable: true });
+      const wasIntercepted = !window.dispatchEvent(subViewEvent);
+
+      if (wasIntercepted) {
+        return; // Handled by active subview (e.g. returned to dashboard)
+      }
+
+      // 2. If on any nested screen other than root, go back one step in browser/route history
+      if (location.pathname !== "/") {
+        navigate(-1);
+      } else {
+        // 3. Only if at root screen, exit application
+        nativeNfcService.exitApp();
+      }
+    };
+
+    window.addEventListener('defenxia:hardwareBack', handleHardwareBack);
+    return () => {
+      window.removeEventListener('defenxia:hardwareBack', handleHardwareBack);
+    };
+  }, [location.pathname, navigate]);
 
   return (
-    <div className="min-h-screen bg-background pb-16">
+    <div className="min-h-screen bg-background pb-16 safe-area-bottom">
+      <ScrollToTop />
       <AuthModal />
       {isSimulating && <SimulateAttackPanel />}
       <Routes>
