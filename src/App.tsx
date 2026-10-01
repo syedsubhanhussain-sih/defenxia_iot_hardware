@@ -1,0 +1,148 @@
+import React, { useEffect } from "react";
+import { Toaster } from "@/components/ui/toaster";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { Header } from "./components/layout/header";
+import { Footer } from "./components/layout/footer";
+import { SimulationProvider, useSimulation } from "./contexts/SimulationContext";
+import { AuthProvider } from "./contexts/AuthContext";
+import { AuthModal } from "./components/AuthModal";
+import { ScrollToTop } from "./components/ScrollToTop";
+import { nativeNfcService } from "./services/nativeNfcService";
+import Homepage from "./pages/Homepage";
+import Scanning from "./pages/Scanning";
+import QRScanner from "./pages/QRScanner";
+import WebsiteScanner from "./pages/WebsiteScanner";
+import Settings from "./pages/Settings";
+import WiFiSecurity from "./pages/WiFiSecurity";
+import ReportAnalysis from "./pages/ReportAnalysis";
+import DataBreach from "./pages/DataBreach";
+import AppPermissions from "./pages/AppPermissions";
+import AISMSShield from "./pages/AISMSShield";
+import AntiScamKillSwitch from "./pages/AntiScamKillSwitch";
+import CyberSanchaarShield from "./pages/CyberSanchaarShield";
+import VirusScanner from "./pages/VirusScanner";
+import IPSecurityCheck from "./pages/IPSecurityCheck";
+import CyberNews from "./pages/CyberNews";
+import CyberHelp from "./pages/CyberHelp";
+import ScamGuide from "./pages/ScamGuide";
+import BankShield from "./pages/BankShield";
+import NotFound from "./pages/NotFound";
+import { SimulateAttackPanel } from "./components/SimulateAttackPanel";
+
+const queryClient = new QueryClient();
+
+const AppContent = () => {
+  const { isSimulating } = useSimulation();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [showCoverpage, setShowCoverpage] = React.useState(true);
+  const [coverpageFading, setCoverpageFading] = React.useState(false);
+
+  useEffect(() => {
+    // Keep coverpage visible while app initializes, then fade out smoothly
+    const fadeTimer = setTimeout(() => {
+      setCoverpageFading(true);
+    }, 1800);
+
+    const removeTimer = setTimeout(() => {
+      setShowCoverpage(false);
+    }, 2400);
+
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(removeTimer);
+    };
+  }, []);
+
+  // Hardware Back Button Navigation Handling (Fixes Issue 10)
+  useEffect(() => {
+    const handleHardwareBack = () => {
+      // 1. Dispatch custom event to check if active view (e.g. BankShield subview) intercepts it
+      const subViewEvent = new CustomEvent('defenxia:subViewBack', { cancelable: true });
+      const wasIntercepted = !window.dispatchEvent(subViewEvent);
+
+      if (wasIntercepted) {
+        return; // Handled by active subview (e.g. returned to dashboard)
+      }
+
+      // 2. If on any nested screen other than root, go back one step in browser/route history
+      if (location.pathname !== "/") {
+        navigate(-1);
+      } else {
+        // 3. Only if at root screen, exit application
+        nativeNfcService.exitApp();
+      }
+    };
+
+    window.addEventListener('defenxia:hardwareBack', handleHardwareBack);
+    return () => {
+      window.removeEventListener('defenxia:hardwareBack', handleHardwareBack);
+    };
+  }, [location.pathname, navigate]);
+
+  return (
+    <div className="min-h-screen bg-background pb-16 safe-area-bottom">
+      {showCoverpage && (
+        <div 
+          className={`fixed inset-0 z-[999999] bg-[#030712] flex items-center justify-center transition-opacity duration-600 pointer-events-none ${
+            coverpageFading ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          <img 
+            src="/defenxia-coverpage.png" 
+            alt="DEFENXIA" 
+            className="w-full h-full object-cover select-none"
+          />
+        </div>
+      )}
+      <ScrollToTop />
+      <AuthModal />
+      {isSimulating && <SimulateAttackPanel />}
+      <Routes>
+        <Route path="/" element={<><Header /><Homepage /><Footer /></>} />
+        <Route path="/scanning" element={<><Header /><Scanning /><Footer /></>} />
+        <Route path="/qr-scanner" element={<><Header /><QRScanner /><Footer /></>} />
+        <Route path="/website-scanner" element={<><Header /><WebsiteScanner /><Footer /></>} />
+        <Route path="/settings" element={<><Header /><Settings /><Footer /></>} />
+        <Route path="/wifi-security" element={<><Header /><WiFiSecurity /><Footer /></>} />
+        <Route path="/report-analysis" element={<><Header /><ReportAnalysis /><Footer /></>} />
+        <Route path="/data-breach" element={<><Header /><DataBreach /><Footer /></>} />
+        <Route path="/app-permissions" element={<><Header /><AppPermissions /><Footer /></>} />
+        <Route path="/ai-sms-shield" element={<><Header /><AISMSShield /><Footer /></>} />
+        <Route path="/anti-scam-kill-switch" element={<><Header /><AntiScamKillSwitch /><Footer /></>} />
+        <Route path="/cyber-sanchaar-shield" element={<><Header /><CyberSanchaarShield /><Footer /></>} />
+        <Route path="/virus-scanner" element={<><Header /><VirusScanner /><Footer /></>} />
+        <Route path="/ip-security-check" element={<><Header /><IPSecurityCheck /><Footer /></>} />
+        <Route path="/cyber-news" element={<><Header /><CyberNews /><Footer /></>} />
+        <Route path="/cyber-help" element={<><Header /><CyberHelp /><Footer /></>} />
+        <Route path="/cyber-help/guide/:scamType" element={<><Header /><ScamGuide /><Footer /></>} />
+        <Route path="/bank-shield" element={<><Header /><BankShield /><Footer /></>} />
+        {/* Legacy routes kept for backward compat */}
+        <Route path="/ai-analysis" element={<><Header /><AISMSShield /><Footer /></>} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </div>
+  );
+};
+
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <BrowserRouter>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <AuthProvider>
+          <SimulationProvider>
+            <AppContent />
+          </SimulationProvider>
+        </AuthProvider>
+      </TooltipProvider>
+    </BrowserRouter>
+  </QueryClientProvider>
+);
+
+export default App;

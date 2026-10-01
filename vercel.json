@@ -1,0 +1,1 @@
+{"rewrites":[{"destination":"/api/breach-check","source":"/lookup"},{"destination":"/api/leakcheck","source":"/api/leakcheck/public"},{"destination":"/api/leakcheck","source":"/api/leakcheck"},{"destination":"/api/virustotal","source":"/api/virustotal"},{"destination":"/index.html","source":"/((?!api/|lookup).*)"}]}
